@@ -1,9 +1,9 @@
-pmacct (0.14.0+osvx1+projectx2) unstable; urgency=medium
+pmacct (0.14.3+osvx1+projectx1) unstable; urgency=medium
 
   * Fix .gitignore
   * Upgrade to pmacct 0.14.3
 
- -- Valentin Yakovenkov <yakovenkov@gmail.com>  Tue, 03 Jun 2014 17:25:26 +0400
+ -- Valentin Yakovenkov <yakovenkov@gmail.com>  Tue, 03 Jun 2014 17:31:03 +0400
 
 pmacct (0.14.0+osvx1+projectx1) unstable; urgency=medium
 
