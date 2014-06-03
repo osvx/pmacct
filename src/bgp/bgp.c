@@ -1,6 +1,6 @@
 /*  
     pmacct (Promiscuous mode IP Accounting package)
-    pmacct is Copyright (C) 2003-2012 by Paolo Lucente
+    pmacct is Copyright (C) 2003-2013 by Paolo Lucente
 */
 
 /*
@@ -133,8 +133,8 @@ void skinny_bgp_daemon()
     if (rc < 0) Log(LOG_ERR, "WARN ( default/core/BGP ): setsockopt() failed for IP_TOS (errno: %d).\n", errno);
   }
 
-  rc = Setsocksize(sock, SOL_SOCKET, SO_REUSEADDR, (char *)&yes, sizeof(yes));
-  if (rc < 0) Log(LOG_ERR, "WARN ( default/core/BGP ): Setsocksize() failed for SO_REUSEADDR (errno: %d).\n", errno);
+  rc = setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, (char *)&yes, sizeof(yes));
+  if (rc < 0) Log(LOG_ERR, "WARN ( default/core/BGP ): setsockopt() failed for SO_REUSEADDR (errno: %d).\n", errno);
 
   rc = bind(sock, (struct sockaddr *) &server, slen);
   if (rc < 0) {
@@ -955,8 +955,8 @@ int bgp_attr_parse_mp_reach(struct bgp_peer *peer, u_int16_t len, struct bgp_att
   mpnhoplen = *ptr; ptr++;
   mpreachlen -= 4; /* 2+1+1 above */ 
   
-  /* IPv4, RD+IPv4, IPv6, IPv6 link-local+IPv6 global */
-  if (mpnhoplen == 4 || mpnhoplen == 12 || mpnhoplen == 16 || mpnhoplen == 32) {
+  /* IPv4 (4), RD+IPv4 (12), IPv6 (16), RD+IPv6 (24), IPv6 link-local+IPv6 global (32) */
+  if (mpnhoplen == 4 || mpnhoplen == 12 || mpnhoplen == 16 || mpnhoplen == 24 || mpnhoplen == 32) {
 	if (mpreachlen > mpnhoplen) {
 	  switch (mpnhoplen) {
 	  case 4:
@@ -974,6 +974,11 @@ int bgp_attr_parse_mp_reach(struct bgp_peer *peer, u_int16_t len, struct bgp_att
 	    attr->mp_nexthop.family = AF_INET6;
 	    memcpy(&attr->mp_nexthop.address.ipv6, ptr, 16); 
 	    break;
+	  case 24:
+            // XXX: make any use of RD ? 
+            attr->mp_nexthop.family = AF_INET6;
+            memcpy(&attr->mp_nexthop.address.ipv6, ptr+8, 16);
+            break;
 #endif
 	  default:
 	    memset(&attr->mp_nexthop, 0, sizeof(struct host_addr));
@@ -1088,7 +1093,7 @@ int bgp_nlri_parse(struct bgp_peer *peer, void *attr, struct bgp_nlri *info)
 	  safi = SAFI_UNICAST;
 	}
 	else if (info->safi == SAFI_MPLS_VPN) { /* rfc4364 BGP/MPLS IP Virtual Private Networks */
-	  if (info->afi == AFI_IP && p.prefixlen > 120 || info->afi != AFI_IP /* XXX: IPv6? */) return -1;
+	  if (info->afi == AFI_IP && p.prefixlen > 120 || (info->afi == AFI_IP6 && p.prefixlen > 216)) return -1;
 
           psize = ((p.prefixlen+7)/8);
           if (psize > end) return -1;
@@ -2142,7 +2147,7 @@ void bgp_srcdst_lookup(struct packet_ptrs *pptrs)
               sa = &sa_local;
               memset(sa, 0, sizeof(struct sockaddr));
               sa->sa_family = AF_INET6;
-              memcpy(&((struct sockaddr_in6 *)sa)->sin6_addr, &info->attr->mp_nexthop.address.ipv6, 16);
+              ip6_addr_cpy(&((struct sockaddr_in6 *)sa)->sin6_addr, &info->attr->mp_nexthop.address.ipv6);
               goto start_again;
             }
 #endif
@@ -2271,7 +2276,7 @@ void bgp_follow_nexthop_lookup(struct packet_ptrs *pptrs)
           pptrs->f_agent = (char *) &sa_local;
           memset(sa, 0, sizeof(struct sockaddr));
           sa->sa_family = AF_INET6;
-          memcpy(&((struct sockaddr_in6 *)sa)->sin6_addr, &info->attr->mp_nexthop.address.ipv6, 16);
+          ip6_addr_cpy(&((struct sockaddr_in6 *)sa)->sin6_addr, &info->attr->mp_nexthop.address.ipv6);
 	  saved_info = (char *) info;
 	  ttl--;
           goto start_again;
@@ -2342,7 +2347,15 @@ void write_neighbors_file(char *filename)
 	  neighbor[len] = '\0';
           fwrite(neighbor, len, 1, file);
         }
-        /* we don't happen to support IPv6 neighbors just yet */
+#if defined ENABLE_IPV6
+	else if (peers[idx].addr.family == AF_INET6) {
+          inet_ntop(AF_INET6, &peers[idx].addr.address.ipv6, neighbor, INET6_ADDRSTRLEN);
+          len = strlen(neighbor);
+          neighbor[len] = '\n'; len++;
+          neighbor[len] = '\0';
+          fwrite(neighbor, len, 1, file);
+        }
+#endif
       }
     }
 

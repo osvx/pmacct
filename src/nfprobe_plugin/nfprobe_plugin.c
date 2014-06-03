@@ -1,6 +1,6 @@
 /*
     pmacct (Promiscuous mode IP Accounting package)
-    pmacct is Copyright (C) 2003-2012 by Paolo Lucente
+    pmacct is Copyright (C) 2003-2013 by Paolo Lucente
 */
 
 /*
@@ -1265,6 +1265,7 @@ void nfprobe_plugin(int pipe_fd, struct configuration *cfgptr, void *ptr)
 {
   struct pkt_data *data, dummy;
   struct pkt_extras *extras;
+  struct pkt_bgp_primitives *dummy_pbgp = NULL;
   struct ports_table pt;
   struct pollfd pfd;
   struct timezone tz;
@@ -1276,6 +1277,7 @@ void nfprobe_plugin(int pipe_fd, struct configuration *cfgptr, void *ptr)
   struct ring *rg = &((struct channels_list_entry *)ptr)->rg;
   struct ch_status *status = ((struct channels_list_entry *)ptr)->status;
   u_int32_t bufsz = ((struct channels_list_entry *)ptr)->bufsize;
+  struct networks_file_data nfd;
 
   unsigned char *rgptr, *dataptr;
   int pollagain = TRUE;
@@ -1458,7 +1460,7 @@ read_data:
 	  memcpy(&dummy.primitives.src_ip, &data->primitives.src_ip, HostAddrSz);
 	  memcpy(&dummy.primitives.dst_ip, &data->primitives.dst_ip, HostAddrSz);
 
-          for (num = 0; net_funcs[num]; num++) (*net_funcs[num])(&nt, &nc, &dummy.primitives);
+          for (num = 0; net_funcs[num]; num++) (*net_funcs[num])(&nt, &nc, &dummy.primitives, dummy_pbgp, &nfd);
 
 	  if (config.nfacctd_as == NF_AS_NEW) {
 	    data->primitives.src_as = dummy.primitives.src_as;
@@ -1509,6 +1511,7 @@ expiry_check:
 
 	/* Let's try to sleep a bit and re-open the NetFlow send socket */
 	if (dest.ss_family != 0) {
+	  if (target.fd != -1) close(target.fd);
 	  sleep(5);
 	  target.fd = connsock(&dest, dest_len, hoplimit);
 

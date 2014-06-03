@@ -1,6 +1,6 @@
 /*
     pmacct (Promiscuous mode IP Accounting package)
-    pmacct is Copyright (C) 2003-2012 by Paolo Lucente
+    pmacct is Copyright (C) 2003-2013 by Paolo Lucente
 */
 
 /*
@@ -41,15 +41,22 @@ void sqlite3_plugin(int pipe_fd, struct configuration *cfgptr, void *ptr)
   int ret, num;
   struct ring *rg = &((struct channels_list_entry *)ptr)->rg;
   struct ch_status *status = ((struct channels_list_entry *)ptr)->status;
+  int datasize = ((struct channels_list_entry *)ptr)->datasize;
   u_int32_t bufsz = ((struct channels_list_entry *)ptr)->bufsize;
   struct pkt_bgp_primitives *pbgp;
+  struct pkt_nat_primitives *pnat;
+  struct networks_file_data nfd;
   char *dataptr;
 
   unsigned char *rgptr;
   int pollagain = TRUE;
   u_int32_t seq = 1, rg_err_count = 0; 
 
+  struct extra_primitives extras;
+  struct primitives_ptrs prim_ptrs;
+
   memcpy(&config, cfgptr, sizeof(struct configuration));
+  memcpy(&extras, &((struct channels_list_entry *)ptr)->extras, sizeof(struct extra_primitives));
   recollect_pipe_memory(ptr);
   pm_setproctitle("%s [%s]", "SQLite3 Plugin", config.name);
   memset(&idata, 0, sizeof(idata));
@@ -60,7 +67,7 @@ void sqlite3_plugin(int pipe_fd, struct configuration *cfgptr, void *ptr)
   }
 
   sql_set_signals();
-  sql_init_default_values();
+  sql_init_default_values(&extras);
   SQLI_init_default_values(&idata);
   SQLI_set_callbacks(&sqlfunc_cbr);
   sql_set_insert_func();
@@ -69,6 +76,7 @@ void sqlite3_plugin(int pipe_fd, struct configuration *cfgptr, void *ptr)
   reload_map = FALSE;
   idata.now = time(NULL);
   refresh_deadline = idata.now;
+  idata.cfg = &config;
 
   sql_init_maps(&nt, &nc, &pt);
   sql_init_global_buffers();
@@ -96,9 +104,17 @@ void sqlite3_plugin(int pipe_fd, struct configuration *cfgptr, void *ptr)
   for(;;) {
     poll_again:
     status->wakeup = TRUE;
-    sql_calc_refresh_timeout(refresh_deadline, idata.now, &timeout);
+    calc_refresh_timeout(refresh_deadline, idata.now, &timeout);
     ret = poll(&pfd, 1, timeout);
-    if (ret < 0) goto poll_again;
+
+    if (ret <= 0) {
+      if (getppid() == 1) {
+        Log(LOG_ERR, "ERROR ( %s/%s ): Core process *seems* gone. Exiting.\n", config.name, config.type);
+        exit_plugin(1);
+      }
+
+      if (ret < 0) goto poll_again;
+    }
 
     idata.now = time(NULL);
 
@@ -118,7 +134,7 @@ void sqlite3_plugin(int pipe_fd, struct configuration *cfgptr, void *ptr)
     switch (ret) {
     case 0: /* timeout */
       if (qq_ptr) sql_cache_flush(queries_queue, qq_ptr, &idata, FALSE);
-      switch (fork()) {
+      switch (ret = fork()) {
       case 0: /* Child */
 	/* we have to ignore signals to avoid loops:
 	   because we are already forked */
@@ -139,6 +155,11 @@ void sqlite3_plugin(int pipe_fd, struct configuration *cfgptr, void *ptr)
 	  
         exit(0);
       default: /* Parent */
+        if (ret == -1) { /* Something went wrong */
+          Log(LOG_WARNING, "WARN ( %s/%s ): Unable to fork DB writer: %s\n", config.name, config.type, strerror(errno));
+          sql_writers.active--;
+        }
+
 	if (pqq_ptr) sql_cache_flush_pending(pending_queries_queue, pqq_ptr, &idata);
 	gettimeofday(&idata.flushtime, NULL);
 	while (idata.now > refresh_deadline)
@@ -200,7 +221,7 @@ void sqlite3_plugin(int pipe_fd, struct configuration *cfgptr, void *ptr)
       /* lazy sql refresh handling */ 
       if (idata.now > refresh_deadline) {
         if (qq_ptr) sql_cache_flush(queries_queue, qq_ptr, &idata, FALSE);
-        switch (fork()) {
+        switch (ret = fork()) {
         case 0: /* Child */
           /* we have to ignore signals to avoid loops:
              because we are already forked */
@@ -221,6 +242,11 @@ void sqlite3_plugin(int pipe_fd, struct configuration *cfgptr, void *ptr)
 
           exit(0);
         default: /* Parent */
+          if (ret == -1) { /* Something went wrong */
+            Log(LOG_WARNING, "WARN ( %s/%s ): Unable to fork DB writer: %s\n", config.name, config.type, strerror(errno));
+            sql_writers.active--;
+          }
+
 	  if (pqq_ptr) sql_cache_flush_pending(pending_queries_queue, pqq_ptr, &idata);
 	  gettimeofday(&idata.flushtime, NULL);
 	  while (idata.now > refresh_deadline)
@@ -257,23 +283,35 @@ void sqlite3_plugin(int pipe_fd, struct configuration *cfgptr, void *ptr)
       data = (struct pkt_data *) (pipebuf+sizeof(struct ch_buf_hdr));
 
       while (((struct ch_buf_hdr *)pipebuf)->num) {
+        if (extras.off_pkt_bgp_primitives)
+          pbgp = (struct pkt_bgp_primitives *) ((u_char *)data + extras.off_pkt_bgp_primitives);
+        else
+          pbgp = NULL;
+        if (extras.off_pkt_nat_primitives)
+          pnat = (struct pkt_nat_primitives *) ((u_char *)data + extras.off_pkt_nat_primitives);
+        else pnat = NULL;
+
 	for (num = 0; net_funcs[num]; num++)
-	  (*net_funcs[num])(&nt, &nc, &data->primitives);
+	  (*net_funcs[num])(&nt, &nc, &data->primitives, pbgp, &nfd);
 
 	if (config.ports_file) {
 	  if (!pt.table[data->primitives.src_port]) data->primitives.src_port = 0;
 	  if (!pt.table[data->primitives.dst_port]) data->primitives.dst_port = 0;
 	}
 
-        if (PbgpSz) pbgp = (struct pkt_bgp_primitives *) ((u_char *)data+PdataSz);
-        else pbgp = NULL;
+        if (config.pkt_len_distrib_bins_str &&
+            config.what_to_count_2 & COUNT_PKT_LEN_DISTRIB)
+          evaluate_pkt_len_distrib(data);
 
-        (*insert_func)(data, pbgp, &idata);
+        prim_ptrs.data = data;
+        prim_ptrs.pbgp = pbgp;
+        prim_ptrs.pnat = pnat;
+        (*insert_func)(&prim_ptrs, &idata);
 
         ((struct ch_buf_hdr *)pipebuf)->num--;
         if (((struct ch_buf_hdr *)pipebuf)->num) {
           dataptr = (unsigned char *) data;
-          dataptr += PdataSz + PbgpSz;
+	  dataptr += datasize;
           data = (struct pkt_data *) dataptr;
         }
       }
@@ -284,8 +322,8 @@ void sqlite3_plugin(int pipe_fd, struct configuration *cfgptr, void *ptr)
 
 int SQLI_cache_dbop(struct DBdesc *db, struct db_cache *cache_elem, struct insert_data *idata)
 {
-  char *ptr_values, *ptr_where, *ptr_mv, *ptr_set;
-  int num=0, ret=0, have_flows=0, len=0;
+  char *ptr_values, *ptr_where, *ptr_mv, *ptr_set, *ptr_insert;
+  int num=0, num_set=0, ret=0, have_flows=0, len=0;
 
   if (idata->mv.last_queue_elem) {
     ret = sqlite3_exec(db->desc, multi_values_buffer, NULL, NULL, NULL);
@@ -305,18 +343,27 @@ int SQLI_cache_dbop(struct DBdesc *db, struct db_cache *cache_elem, struct inser
   ptr_where = where_clause;
   ptr_values = values_clause; 
   ptr_set = set_clause;
+  ptr_insert = insert_full_clause;
   memset(where_clause, 0, sizeof(where_clause));
   memset(values_clause, 0, sizeof(values_clause));
   memset(set_clause, 0, sizeof(set_clause));
+  memset(insert_full_clause, 0, sizeof(insert_full_clause));
 
   for (num = 0; num < idata->num_primitives; num++)
     (*where[num].handler)(cache_elem, idata, num, &ptr_values, &ptr_where);
 
-  for (num = 0; set[num].type; num++)
-    (*set[num].handler)(cache_elem, idata, num, &ptr_set, NULL);
+  if (cache_elem->flow_type == NF9_FTYPE_EVENT) {
+    for (num_set = 0; set_event[num_set].type; num_set++)
+      (*set_event[num_set].handler)(cache_elem, idata, num_set, &ptr_set, NULL);
+  }
+  else {
+    for (num_set = 0; set[num_set].type; num_set++)
+      (*set[num_set].handler)(cache_elem, idata, num_set, &ptr_set, NULL);
+  }
   
-  /* sending UPDATE query */
-  if (!config.sql_dont_try_update) {
+  /* sending UPDATE query a) if not switched off and
+     b) if we actually have something to update */
+  if (!config.sql_dont_try_update && num_set) {
     strncpy(sql_data, update_clause, SPACELEFT(sql_data));
     strncat(sql_data, set_clause, SPACELEFT(sql_data));
     strncat(sql_data, where_clause, SPACELEFT(sql_data));
@@ -325,17 +372,26 @@ int SQLI_cache_dbop(struct DBdesc *db, struct db_cache *cache_elem, struct inser
     if (ret) goto signal_error; 
   }
 
-  if (config.sql_dont_try_update || (sqlite3_changes(db->desc) == 0)) {
+  if (config.sql_dont_try_update || !num_set || (sqlite3_changes(db->desc) == 0)) {
     /* UPDATE failed, trying with an INSERT query */ 
+    if (cache_elem->flow_type == NF9_FTYPE_EVENT) {
+      strncpy(insert_full_clause, insert_clause, SPACELEFT(insert_full_clause));
+      strncat(insert_full_clause, insert_nocounters_clause, SPACELEFT(insert_full_clause));
+      strncat(ptr_values, ")", SPACELEFT(values_clause));
+    }
+    else {
+      strncpy(insert_full_clause, insert_clause, SPACELEFT(insert_full_clause));
+      strncat(insert_full_clause, insert_counters_clause, SPACELEFT(insert_full_clause));
 #if defined HAVE_64BIT_COUNTERS
-    if (have_flows) snprintf(ptr_values, SPACELEFT(values_clause), ", %llu, %llu, %llu)", cache_elem->packet_counter, cache_elem->bytes_counter, cache_elem->flows_counter);
-    else snprintf(ptr_values, SPACELEFT(values_clause), ", %llu, %llu)", cache_elem->packet_counter, cache_elem->bytes_counter);
+      if (have_flows) snprintf(ptr_values, SPACELEFT(values_clause), ", %llu, %llu, %llu)", cache_elem->packet_counter, cache_elem->bytes_counter, cache_elem->flows_counter);
+      else snprintf(ptr_values, SPACELEFT(values_clause), ", %llu, %llu)", cache_elem->packet_counter, cache_elem->bytes_counter);
 #else
-    if (have_flows) snprintf(ptr_values, SPACELEFT(values_clause), ", %lu, %lu, %lu)", cache_elem->packet_counter, cache_elem->bytes_counter, cache_elem->flows_counter);
-    else snprintf(ptr_values, SPACELEFT(values_clause), ", %lu, %lu)", cache_elem->packet_counter, cache_elem->bytes_counter);
+      if (have_flows) snprintf(ptr_values, SPACELEFT(values_clause), ", %lu, %lu, %lu)", cache_elem->packet_counter, cache_elem->bytes_counter, cache_elem->flows_counter);
+      else snprintf(ptr_values, SPACELEFT(values_clause), ", %lu, %lu)", cache_elem->packet_counter, cache_elem->bytes_counter);
 #endif
+    }
     
-    strncpy(sql_data, insert_clause, sizeof(sql_data));
+    strncpy(sql_data, insert_full_clause, sizeof(sql_data));
     strncat(sql_data, values_clause, SPACELEFT(sql_data));
 
     if (config.sql_multi_values) {
@@ -425,6 +481,10 @@ void SQLI_cache_purge(struct db_cache *queue[], int index, struct insert_data *i
     char tmpbuf[LONGLONGSRVBUFLEN];
     time_t stamp = idata->new_basetime ? idata->new_basetime : idata->basetime;
 
+    handle_dynname_internal_strings_same(tmpbuf, LONGSRVBUFLEN, insert_clause);
+    handle_dynname_internal_strings_same(tmpbuf, LONGSRVBUFLEN, update_clause);
+    handle_dynname_internal_strings_same(tmpbuf, LONGSRVBUFLEN, lock_clause);
+
     strftime_same(insert_clause, LONGSRVBUFLEN, tmpbuf, &stamp);
     strftime_same(update_clause, LONGSRVBUFLEN, tmpbuf, &stamp);
     strftime_same(lock_clause, LONGSRVBUFLEN, tmpbuf, &stamp);
@@ -466,7 +526,7 @@ void SQLI_cache_purge(struct db_cache *queue[], int index, struct insert_data *i
 
 int SQLI_evaluate_history(int primitive)
 {
-  if (config.sql_history || config.nfacctd_sql_log) {
+  if (config.sql_history) {
     if (primitive) {
       strncat(insert_clause, ", ", SPACELEFT(insert_clause));
       strncat(values[primitive].string, ", ", sizeof(values[primitive].string));
@@ -494,7 +554,7 @@ int SQLI_evaluate_history(int primitive)
 
 int SQLI_compose_static_queries()
 {
-  int primitives=0, set_primitives=0, have_flows=0;
+  int primitives=0, set_primitives=0, set_event_primitives=0, have_flows=0;
 
   if (config.what_to_count & COUNT_FLOWS || (config.sql_table_version >= 4 &&
                                              config.sql_table_version < SQL_TABLE_VERSION_BGP &&
@@ -514,9 +574,11 @@ int SQLI_compose_static_queries()
   strncpy(values[primitives].string, " VALUES (", sizeof(values[primitives].string));
   primitives = SQLI_evaluate_history(primitives);
   primitives = sql_evaluate_primitives(primitives);
-  strncat(insert_clause, ", packets, bytes", SPACELEFT(insert_clause));
-  if (have_flows) strncat(insert_clause, ", flows", SPACELEFT(insert_clause));
-  strncat(insert_clause, ")", SPACELEFT(insert_clause));
+
+  strncpy(insert_counters_clause, ", packets, bytes", SPACELEFT(insert_counters_clause));
+  if (have_flows) strncat(insert_counters_clause, ", flows", SPACELEFT(insert_counters_clause));
+  strncat(insert_counters_clause, ")", SPACELEFT(insert_counters_clause));
+  strncpy(insert_nocounters_clause, ")", SPACELEFT(insert_nocounters_clause));
 
   /* "LOCK ..." stuff */
   if (config.sql_locking_style) Log(LOG_WARNING, "WARN ( %s/%s ): sql_locking_style is not supported. Ignored.\n", config.name, config.type);
@@ -527,39 +589,36 @@ int SQLI_compose_static_queries()
   snprintf(update_clause, sizeof(update_clause), "UPDATE %s ", config.sql_table);
 
   set_primitives = sql_compose_static_set(have_flows);
+  set_event_primitives = sql_compose_static_set_event();
 
-  if (config.sql_history || config.nfacctd_sql_log) {
-    if (!config.nfacctd_sql_log) {
-      if (!config.sql_history_since_epoch) {
-	strncpy(set[set_primitives].string, ", ", SPACELEFT(set[set_primitives].string));
-	strncat(set[set_primitives].string, "stamp_updated=DATETIME('now', 'localtime')", SPACELEFT(set[set_primitives].string));
-	set[set_primitives].type = TIMESTAMP;
-	set[set_primitives].handler = count_noop_setclause_handler;
-	set_primitives++;
-      }
-      else {
-	strncpy(set[set_primitives].string, ", ", SPACELEFT(set[set_primitives].string));
-	strncat(set[set_primitives].string, "stamp_updated=STRFTIME('%%s', 'now')", SPACELEFT(set[set_primitives].string));
-	set[set_primitives].type = TIMESTAMP;
-	set[set_primitives].handler = count_noop_setclause_handler;
-	set_primitives++;
-      }
+  if (config.sql_history) {
+    if (!config.sql_history_since_epoch) {
+      strncpy(set[set_primitives].string, ", ", SPACELEFT(set[set_primitives].string));
+      strncat(set[set_primitives].string, "stamp_updated=DATETIME('now', 'localtime')", SPACELEFT(set[set_primitives].string));
+      set[set_primitives].type = TIMESTAMP;
+      set[set_primitives].handler = count_noop_setclause_handler;
+      set_primitives++;
+
+      if (set_event_primitives) strncpy(set_event[set_event_primitives].string, ", ", SPACELEFT(set_event[set_event_primitives].string));
+      else strncpy(set_event[set_event_primitives].string, "SET ", SPACELEFT(set_event[set_event_primitives].string));
+      strncat(set_event[set_event_primitives].string, "stamp_updated=DATETIME('now', 'localtime')", SPACELEFT(set_event[set_event_primitives].string));
+      set_event[set_event_primitives].type = TIMESTAMP;
+      set_event[set_event_primitives].handler = count_noop_setclause_event_handler;
+      set_event_primitives++;
     }
     else {
-      if (!config.sql_history_since_epoch) {
-	strncpy(set[set_primitives].string, ", ", SPACELEFT(set[set_primitives].string));
-	strncat(set[set_primitives].string, "stamp_updated=DATETIME(%u, 'unixepoch', 'localtime')", SPACELEFT(set[set_primitives].string));
-	set[set_primitives].type = TIMESTAMP;
-	set[set_primitives].handler = count_timestamp_setclause_handler;
-	set_primitives++;
-      }
-      else {
-	strncpy(set[set_primitives].string, ", ", SPACELEFT(set[set_primitives].string));
-	strncat(set[set_primitives].string, "stamp_updated=%u", SPACELEFT(set[set_primitives].string));
-	set[set_primitives].type = TIMESTAMP;
-	set[set_primitives].handler = count_timestamp_setclause_handler;
-	set_primitives++;
-      }
+      strncpy(set[set_primitives].string, ", ", SPACELEFT(set[set_primitives].string));
+      strncat(set[set_primitives].string, "stamp_updated=STRFTIME('%%s', 'now')", SPACELEFT(set[set_primitives].string));
+      set[set_primitives].type = TIMESTAMP;
+      set[set_primitives].handler = count_noop_setclause_handler;
+      set_primitives++;
+
+      if (set_event_primitives) strncpy(set_event[set_event_primitives].string, ", ", SPACELEFT(set_event[set_event_primitives].string));
+      else strncpy(set_event[set_event_primitives].string, "SET ", SPACELEFT(set_event[set_event_primitives].string));
+      strncat(set_event[set_event_primitives].string, "stamp_updated=STRFTIME('%%s', 'now')", SPACELEFT(set_event[set_event_primitives].string));
+      set_event[set_event_primitives].type = TIMESTAMP;
+      set_event[set_event_primitives].handler = count_noop_setclause_event_handler;
+      set_event_primitives++;
     }
   }
 
@@ -654,7 +713,7 @@ void SQLI_init_default_values(struct insert_data *idata)
     else if (config.sql_table_version == 2) config.sql_table = sqlite3_table_v2;
     else config.sql_table = sqlite3_table;
   }
-  if (strchr(config.sql_table, '%')) idata->dyn_table = TRUE;
+  if (strchr(config.sql_table, '%') || strchr(config.sql_table, '$')) idata->dyn_table = TRUE;
   glob_dyn_table = idata->dyn_table;
   
   if (config.sql_backup_host) idata->recover = TRUE;

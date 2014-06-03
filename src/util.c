@@ -1,6 +1,6 @@
 /*
     pmacct (Promiscuous mode IP Accounting package)
-    pmacct is Copyright (C) 2003-2012 by Paolo Lucente
+    pmacct is Copyright (C) 2003-2013 by Paolo Lucente
 */
 
 /*
@@ -23,6 +23,8 @@
 
 /* includes */
 #include "pmacct.h"
+
+static const char pkt_len_distrib_unknown[] = "unknown";
 
 /* functions */
 void setnonblocking(int sock)
@@ -379,24 +381,21 @@ FILE *open_logfile(char *filename)
   return file;
 }
 
-FILE *open_print_output_file(char *filename, time_t now)
+void close_print_output_file(FILE *f, char *filename, time_t now)
 {
-  char buf[LARGEBUFLEN], *fname_ptr, *fname_ptr_tmp;
+  char buf[LARGEBUFLEN], buf2[LARGEBUFLEN], *fname_ptr, *fname_ptr_tmp;
   char latest_fname[LARGEBUFLEN], latest_pname[LARGEBUFLEN];
-  FILE *file = NULL;
   struct tm *tmnow;
-  uid_t owner = -1;
-  gid_t group = -1;
   u_int16_t offset;
 
-  if (config.files_uid) owner = config.files_uid;
-  if (config.files_gid) group = config.files_gid;
+  fclose(f);
 
+  handle_dynname_internal_strings(buf, LARGEBUFLEN-10, filename);
   tmnow = localtime(&now);
-  strftime(buf, LARGEBUFLEN-10, filename, tmnow);
+  strftime(buf2, LARGEBUFLEN-10, buf, tmnow);
 
   /* Check: filename is not making use of the reserved word 'latest' */
-  for (fname_ptr_tmp = buf, fname_ptr = NULL; fname_ptr_tmp; fname_ptr_tmp = strchr(fname_ptr_tmp, '/')) {
+  for (fname_ptr_tmp = buf2, fname_ptr = NULL; fname_ptr_tmp; fname_ptr_tmp = strchr(fname_ptr_tmp, '/')) {
     if (*fname_ptr_tmp == '/') fname_ptr_tmp++;
     fname_ptr = fname_ptr_tmp;
   }
@@ -404,38 +403,125 @@ FILE *open_print_output_file(char *filename, time_t now)
   strcpy(latest_fname, config.name);
   strcat(latest_fname, "-latest");
   if (!strcmp(fname_ptr, latest_fname)) {
-    Log(LOG_WARNING, "WARN: Invalid print_ouput_file '%s': reserved word\n", buf);
-    return NULL;
+    Log(LOG_WARNING, "WARN: Invalid print_ouput_file '%s': reserved word\n", buf2);
+    return;
   }
 
-  file = fopen(buf, "w");
+  /* Let's point 'latest' to the newly opened file */
+  if (f) {
+    memcpy(latest_pname, buf2, LARGEBUFLEN);
+    offset = strlen(buf2)-strlen(fname_ptr);
+    if (strlen(latest_fname) < LARGEBUFLEN-offset) {
+      strcpy(latest_pname+offset, latest_fname);
+      unlink(latest_pname);
+      symlink(fname_ptr, latest_pname);
+    }
+    else Log(LOG_WARNING, "WARN: Unable to link latest file for print_ouput_file '%s'\n", buf2);
+  }
+}
+
+FILE *open_print_output_file(char *filename, time_t now)
+{
+  char buf[LARGEBUFLEN], buf2[LARGEBUFLEN];
+  FILE *file = NULL;
+  struct tm *tmnow;
+  uid_t owner = -1;
+  gid_t group = -1;
+
+  if (config.files_uid) owner = config.files_uid;
+  if (config.files_gid) group = config.files_gid;
+
+  handle_dynname_internal_strings(buf, LARGEBUFLEN-10, filename);
+  tmnow = localtime(&now);
+  strftime(buf2, LARGEBUFLEN-10, buf, tmnow);
+
+  file = fopen(buf2, "w");
   if (file) {
-    if (chown(buf, owner, group) == -1)
-      Log(LOG_WARNING, "WARN: Unable to chown() print_ouput_file '%s': %s\n", buf, strerror(errno));
+    if (chown(buf2, owner, group) == -1)
+      Log(LOG_WARNING, "WARN: Unable to chown() print_ouput_file '%s': %s\n", buf2, strerror(errno));
 
     if (file_lock(fileno(file))) {
-      Log(LOG_ALERT, "ALERT: Unable to obtain lock for print_ouput_file '%s'.\n", buf);
+      Log(LOG_ALERT, "ALERT: Unable to obtain lock for print_ouput_file '%s'.\n", buf2);
       file = NULL;
-    }
-
-    /* Let's point 'latest' to the newly opened file */
-    if (file) {
-      memcpy(latest_pname, buf, LARGEBUFLEN);
-      offset = strlen(buf)-strlen(fname_ptr);
-      if (strlen(latest_fname) < LARGEBUFLEN-offset) {
-        strcpy(latest_pname+offset, latest_fname);
-        unlink(latest_pname);
-        symlink(fname_ptr, latest_pname);
-      }
-      else Log(LOG_WARNING, "WARN: Unable to link latest file for print_ouput_file '%s'\n", buf);
     }
   }
   else {
-    Log(LOG_ERR, "ERROR: Unable to open print_ouput_file '%s'\n", buf);
+    Log(LOG_ERR, "ERROR: Unable to open print_ouput_file '%s'\n", buf2);
     file = NULL;
   }
 
   return file;
+}
+
+/*
+   Notes:
+   - we check for sufficient space: we do not (de)allocate anything
+   - as long as we have only a couple possible replacements, we test them all
+*/
+void handle_dynname_internal_strings(char *new, int newlen, char *old)
+{
+  int oldlen;
+  char ref_string[] = "$ref", hst_string[] = "$hst";
+  char *ptr_start, *ptr_end;
+
+  oldlen = strlen(old);
+  if (oldlen <= newlen) strcpy(new, old);
+
+  ptr_start = strstr(new, ref_string);
+  if (ptr_start) {
+    char buf[newlen];
+    int len;
+
+    len = strlen(ptr_start);
+    ptr_end = ptr_start;
+    ptr_end += 4;
+    len -= 4;
+
+    snprintf(buf, newlen, "%u", config.sql_refresh_time);
+    strncat(buf, ptr_end, len);
+
+    len = strlen(buf);
+    *ptr_start = '\0';
+    strncat(new, buf, len); 
+  }
+
+  ptr_start = strstr(new, hst_string);
+  if (ptr_start) {
+    char buf[newlen];
+    int len, howmany;
+
+    len = strlen(ptr_start);
+    ptr_end = ptr_start;
+    ptr_end += 4;
+    len -= 4;
+
+    howmany = sql_history_to_secs(config.sql_history, config.sql_history_howmany);
+    snprintf(buf, newlen, "%u", howmany);
+    strncat(buf, ptr_end, len);
+
+    len = strlen(buf);
+    *ptr_start = '\0';
+    strncat(new, buf, len);
+  }
+}
+
+void handle_dynname_internal_strings_same(char *new, int newlen, char *old)
+{
+  handle_dynname_internal_strings(new, newlen, old);
+  strlcpy(old, new, newlen);
+}
+
+int sql_history_to_secs(int mu, int howmany)
+{
+  int ret = 0;
+
+  if (mu == COUNT_MINUTELY) ret = howmany*60;
+  else if (mu == COUNT_HOURLY) ret = howmany*3600;
+  else if (mu == COUNT_DAILY) ret = howmany*86400;
+  else if (mu == COUNT_WEEKLY) ret = howmany*86400*7;
+  else if (mu == COUNT_MONTHLY) ret = howmany*86400*30; /* XXX: this is an approx! */
+
+  return ret;
 }
 
 void write_pid_file(char *filename)
@@ -628,7 +714,7 @@ void mark_columns(char *buf)
 
 int Setsocksize(int s, int level, int optname, void *optval, int optlen)
 {
-  int ret, len, saved, value;
+  int ret, len = sizeof(int), saved, value;
 
   memcpy(&value, optval, sizeof(int));
   
@@ -1251,4 +1337,132 @@ int BTA_find_id(struct id_table *t, struct packet_ptrs *pptrs, pm_id_t *tag, pm_
 #endif
 
   return ret;
+}
+
+void calc_refresh_timeout(time_t deadline, time_t now, int *timeout)
+{
+  *timeout = ((deadline-now)+1)*1000;
+}
+
+int load_tags(char *filename, struct pretag_filter *filter, char *value_ptr)
+{
+  char *count_token, *range_ptr;
+  pm_id_t value = 0, range = 0;
+  int changes = 0;
+  char *endptr_v, *endptr_r;
+  u_int8_t neg;
+
+  if (!filter || !value_ptr) return changes;
+
+  trim_all_spaces(value_ptr);
+  filter->num = 0;
+
+  while ((count_token = extract_token(&value_ptr, ',')) && changes < MAX_PRETAG_MAP_ENTRIES/4) {
+    neg = pt_check_neg(&count_token);
+    range_ptr = pt_check_range(count_token);
+    value = strtoull(count_token, &endptr_v, 10);
+    if (range_ptr) range = strtoull(range_ptr, &endptr_r, 10);
+    else range = value;
+
+    if (range_ptr && range <= value) {
+      Log(LOG_ERR, "WARN ( %s/%s ): Range value is expected in format low-high. '%llu-%llu' not loaded in file '%s'.\n",
+			config.name, config.type, value, range, filename);
+      changes++;
+      break;
+    }
+
+    filter->table[filter->num].neg = neg;
+    filter->table[filter->num].n = value;
+    filter->table[filter->num].r = range;
+    filter->num++;
+    changes++;
+  }
+
+  return changes;
+}
+
+/* return value:
+   TRUE: We want it!
+   FALSE: Discard it!
+*/
+
+int evaluate_tags(struct pretag_filter *filter, pm_id_t tag)
+{
+  int index;
+
+  if (filter->num == 0) return FALSE; /* no entries in the filter array: tag filtering disabled */
+
+  for (index = 0; index < filter->num; index++) {
+    if (filter->table[index].n <= tag && filter->table[index].r >= tag) return (FALSE | filter->table[index].neg);
+    else if (filter->table[index].neg) return FALSE;
+  }
+
+  return TRUE;
+}
+
+void load_pkt_len_distrib_bins()
+{
+  char *ptr, *endptr_v, *endptr_r, *token, *range_ptr;
+  u_int16_t value = 0, range = 0;
+  int idx, aux_idx;
+
+  ptr = config.pkt_len_distrib_bins_str;
+
+  /* We leave config.pkt_len_distrib_bins[0] to NULL to catch unknowns */
+  config.pkt_len_distrib_bins[0] = pkt_len_distrib_unknown;
+  idx = 1;
+
+  while ((token = extract_token(&ptr, ',')) && idx < MAX_PKT_LEN_DISTRIB_BINS) {
+    range_ptr = pt_check_range(token);
+    value = strtoull(token, &endptr_v, 10);
+    if (range_ptr) {
+      range = strtoull(range_ptr, &endptr_r, 10);
+      range_ptr--; *range_ptr = '-';
+    }
+    else range = value;
+
+    if (value > ETHER_JUMBO_MTU || range > ETHER_JUMBO_MTU) {
+      Log(LOG_WARNING, "WARN ( %s/%s ): pkt_len_distrib_bins: value must be in the range 0-9000. '%llu-%llu' not loaded.\n",
+                        config.name, config.type, value, range);
+      continue;
+    }
+
+    if (range_ptr && range <= value) {
+      Log(LOG_WARNING, "WARN ( %s/%s ): pkt_len_distrib_bins: range value is expected in format low-high. '%llu-%llu' not loaded.\n",
+                        config.name, config.type, value, range);
+      continue;
+    }
+
+    config.pkt_len_distrib_bins[idx] = token;
+    for (aux_idx = value; aux_idx <= range; aux_idx++)
+      config.pkt_len_distrib_bins_lookup[aux_idx] = idx;
+
+    idx++;
+  }
+
+  if (config.debug) {
+    for (idx = 0; idx < MAX_PKT_LEN_DISTRIB_BINS; idx++) {
+      if (config.pkt_len_distrib_bins[idx])
+        Log(LOG_DEBUG, "DEBUG ( %s/%s ): pkt_len_distrib_bins[%u]: %s\n", config.name, config.type, idx, config.pkt_len_distrib_bins[idx]);
+    }
+  }
+}
+
+void evaluate_pkt_len_distrib(struct pkt_data *data)
+{
+  pm_counter_t avg_len = data->pkt_num ? data->pkt_len / data->pkt_num : 0;
+
+  if (avg_len > 0 && avg_len < ETHER_JUMBO_MTU) data->primitives.pkt_len_distrib = config.pkt_len_distrib_bins_lookup[avg_len];
+  else data->primitives.pkt_len_distrib = 0;
+}
+
+char *write_sep(char *sep, int *count)
+{
+  static char empty_sep[] = "";
+
+  if (*count) return sep;
+  else {
+    (*count)++;
+    return empty_sep;
+  }
 }

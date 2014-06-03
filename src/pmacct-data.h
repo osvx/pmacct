@@ -1,6 +1,6 @@
 /*
     pmacct (Promiscuous mode IP Accounting package)
-    pmacct is Copyright (C) 2003-2012 by Paolo Lucente
+    pmacct is Copyright (C) 2003-2013 by Paolo Lucente
 */
 
 /*
@@ -29,6 +29,7 @@
 #define PLUGIN_ID_PGSQL         6
 #define PLUGIN_ID_SQLITE3       7
 #define PLUGIN_ID_TEE		8
+#define PLUGIN_ID_MONGODB	9
 #define PLUGIN_ID_UNKNOWN       -1
 
 /* vars */
@@ -231,9 +232,11 @@ static const struct _dictionary_line dictionary[] = {
   {"savefile_wait", cfg_key_savefile_wait},
   {"networks_mask", cfg_key_networks_mask},
   {"networks_file", cfg_key_networks_file},
+  {"networks_file_filter", cfg_key_networks_file_filter},
   {"networks_cache_entries", cfg_key_networks_cache_entries},
   {"refresh_maps", cfg_key_refresh_maps},
   {"ports_file", cfg_key_ports_file},
+  {"timestamps_secs", cfg_key_timestamps_secs},
   {"imt_path", cfg_key_imt_path},
   {"imt_passwd", cfg_key_imt_passwd},
   {"imt_buckets", cfg_key_imt_buckets},
@@ -271,14 +274,23 @@ static const struct _dictionary_line dictionary[] = {
   {"sql_use_copy", cfg_key_sql_use_copy},
   {"sql_num_protos", cfg_key_num_protos},
   {"sql_num_hosts", cfg_key_num_hosts},
-  {"print_refresh_time", cfg_key_print_refresh_time},
+  {"print_refresh_time", cfg_key_sql_refresh_time},
   {"print_cache_entries", cfg_key_print_cache_entries},
   {"print_markers", cfg_key_print_markers},
   {"print_output", cfg_key_print_output},
+  {"print_output_file", cfg_key_print_output_file},
+  {"print_output_separator", cfg_key_print_output_separator},
   {"print_num_protos", cfg_key_num_protos},
   {"print_time_roundoff", cfg_key_sql_history_roundoff},
-  {"print_output_file", cfg_key_sql_table},
   {"print_trigger_exec", cfg_key_sql_trigger_exec},
+  {"mongo_host", cfg_key_sql_host},
+  {"mongo_table", cfg_key_sql_table},
+  {"mongo_refresh_time", cfg_key_sql_refresh_time},
+  {"mongo_cache_entries", cfg_key_print_cache_entries},
+  {"mongo_history", cfg_key_sql_history},
+  {"mongo_time_roundoff", cfg_key_sql_history_roundoff},
+  {"mongo_trigger_exec", cfg_key_sql_trigger_exec},
+  {"mongo_insert_batch", cfg_key_mongo_insert_batch},
   {"nfacctd_port", cfg_key_nfacctd_port},
   {"nfacctd_ip", cfg_key_nfacctd_ip},
   {"nfacctd_allow_file", cfg_key_nfacctd_allow_file},
@@ -287,7 +299,7 @@ static const struct _dictionary_line dictionary[] = {
   {"nfacctd_as_new", cfg_key_nfacctd_as_new},
   {"nfacctd_net", cfg_key_nfacctd_net},
   {"nfacctd_mcast_groups", cfg_key_nfacctd_mcast_groups},
-  {"nfacctd_sql_log", cfg_key_nfacctd_sql_log},
+  {"nfacctd_peer_as", cfg_key_nfprobe_peer_as},
   {"pmacctd_force_frag_handling", cfg_key_pmacctd_force_frag_handling},
   {"pmacctd_frag_buffer_size", cfg_key_pmacctd_frag_buffer_size},
   {"pmacctd_flow_buffer_size", cfg_key_pmacctd_flow_buffer_size},
@@ -317,6 +329,7 @@ static const struct _dictionary_line dictionary[] = {
   {"sfacctd_allow_file", cfg_key_nfacctd_allow_file},
   {"sfacctd_as_new", cfg_key_nfacctd_as_new},
   {"sfacctd_net", cfg_key_nfacctd_net},
+  {"sfacctd_peer_as", cfg_key_nfprobe_peer_as},
   {"uacctd_renormalize", cfg_key_sfacctd_renormalize},
   {"pmacctd_renormalize", cfg_key_sfacctd_renormalize},
   {"sfacctd_renormalize", cfg_key_sfacctd_renormalize},
@@ -347,8 +360,11 @@ static const struct _dictionary_line dictionary[] = {
   {"sfprobe_ifindex", cfg_key_nfprobe_ifindex},
   {"sfprobe_ifspeed", cfg_key_sfprobe_ifspeed},
   {"tee_receiver", cfg_key_nfprobe_receiver},
+  {"tee_receivers", cfg_key_tee_receivers},
   {"tee_source_ip", cfg_key_nfprobe_source_ip},
   {"tee_transparent", cfg_key_tee_transparent},
+  {"tee_max_receivers", cfg_key_tee_max_receivers},
+  {"tee_max_receiver_pools", cfg_key_tee_max_receiver_pools},
   {"bgp_daemon", cfg_key_nfacctd_bgp},
   {"bgp_daemon_ip", cfg_key_nfacctd_bgp_ip},
   {"bgp_daemon_port", cfg_key_nfacctd_bgp_port},
@@ -383,11 +399,19 @@ static const struct _dictionary_line dictionary[] = {
   {"isis_daemon_iface", cfg_key_nfacctd_isis_iface},
   {"isis_daemon_mtu", cfg_key_nfacctd_isis_mtu},
   {"isis_daemon_msglog", cfg_key_nfacctd_isis_msglog},
+  {"igp_daemon", cfg_key_nfacctd_isis},
+  {"igp_daemon_map", cfg_key_igp_daemon_map},
+  {"igp_daemon_map_msglog", cfg_key_igp_daemon_map_msglog},
+#if defined WITH_GEOIP
+  {"geoip_ipv4_file", cfg_key_geoip_ipv4_file},
+#if defined ENABLE_IPV6
+  {"geoip_ipv6_file", cfg_key_geoip_ipv6_file},
+#endif
+#endif
   {"uacctd_group", cfg_key_uacctd_group},
   {"uacctd_nl_size", cfg_key_uacctd_nl_size},
   {"tunnel_0", cfg_key_tunnel_0},
-  {"xlate_src", cfg_key_xlate_src},
-  {"xlate_dst", cfg_key_xlate_dst},
+  {"pkt_len_distrib_bins", cfg_key_pkt_len_distrib_bins},
   {"", NULL},
 };
 
@@ -405,6 +429,9 @@ static struct plugin_type_entry plugin_types_list[] = {
 #endif
 #ifdef WITH_SQLITE3
   {PLUGIN_ID_SQLITE3,	"sqlite3",	sqlite3_plugin},
+#endif
+#ifdef WITH_MONGODB
+  {PLUGIN_ID_MONGODB,   "mongodb",      mongodb_plugin},
 #endif
   {PLUGIN_ID_TEE,	"tee",		tee_plugin},
   {PLUGIN_ID_UNKNOWN,	"",		NULL},

@@ -1,6 +1,6 @@
 /*
     pmacct (Promiscuous mode IP Accounting package)
-    pmacct is Copyright (C) 2003-2012 by Paolo Lucente
+    pmacct is Copyright (C) 2003-2013 by Paolo Lucente
 */
 
 /*
@@ -162,6 +162,146 @@ void count_dst_nmask_handler(const struct db_cache *cache_elem, const struct ins
 {
   snprintf(*ptr_where, SPACELEFT(where_clause), where[num].string, cache_elem->primitives.dst_nmask);
   snprintf(*ptr_values, SPACELEFT(values_clause), values[num].string, cache_elem->primitives.dst_nmask);
+  *ptr_where += strlen(*ptr_where);
+  *ptr_values += strlen(*ptr_values);
+}
+
+#if defined WITH_GEOIP
+void count_src_host_country_handler(const struct db_cache *cache_elem, const struct insert_data *idata, int num, char **ptr_values, char **ptr_where)
+{
+  snprintf(*ptr_where, SPACELEFT(where_clause), where[num].string, GeoIP_code_by_id(cache_elem->primitives.src_ip_country));
+  snprintf(*ptr_values, SPACELEFT(values_clause), values[num].string, GeoIP_code_by_id(cache_elem->primitives.src_ip_country));
+  *ptr_where += strlen(*ptr_where);
+  *ptr_values += strlen(*ptr_values);
+}
+
+void count_dst_host_country_handler(const struct db_cache *cache_elem, const struct insert_data *idata, int num, char **ptr_values, char **ptr_where)
+{
+  snprintf(*ptr_where, SPACELEFT(where_clause), where[num].string, GeoIP_code_by_id(cache_elem->primitives.dst_ip_country));
+  snprintf(*ptr_values, SPACELEFT(values_clause), values[num].string, GeoIP_code_by_id(cache_elem->primitives.dst_ip_country));
+  *ptr_where += strlen(*ptr_where);
+  *ptr_values += strlen(*ptr_values);
+}
+#endif
+
+void count_sampling_rate_handler(const struct db_cache *cache_elem, const struct insert_data *idata, int num, char **ptr_values, char **ptr_where)
+{
+  snprintf(*ptr_where, SPACELEFT(where_clause), where[num].string, cache_elem->primitives.sampling_rate);
+  snprintf(*ptr_values, SPACELEFT(values_clause), values[num].string, cache_elem->primitives.sampling_rate);
+  *ptr_where += strlen(*ptr_where);
+  *ptr_values += strlen(*ptr_values);
+}
+
+void count_pkt_len_distrib_handler(const struct db_cache *cache_elem, const struct insert_data *idata, int num, char **ptr_values, char **ptr_where)
+{
+  snprintf(*ptr_where, SPACELEFT(where_clause), where[num].string, idata->cfg->pkt_len_distrib_bins[cache_elem->primitives.pkt_len_distrib]);
+  snprintf(*ptr_values, SPACELEFT(values_clause), values[num].string, idata->cfg->pkt_len_distrib_bins[cache_elem->primitives.pkt_len_distrib]);
+  *ptr_where += strlen(*ptr_where);
+  *ptr_values += strlen(*ptr_values);
+}
+
+void count_post_nat_src_ip_handler(const struct db_cache *cache_elem, const struct insert_data *idata, int num, char **ptr_values, char **ptr_where)
+{
+  char ptr[INET6_ADDRSTRLEN];
+
+  addr_to_str(ptr, &cache_elem->pnat->post_nat_src_ip);
+  snprintf(*ptr_where, SPACELEFT(where_clause), where[num].string, ptr);
+  snprintf(*ptr_values, SPACELEFT(values_clause), values[num].string, ptr);
+  *ptr_where += strlen(*ptr_where);
+  *ptr_values += strlen(*ptr_values);
+}
+
+void count_post_nat_dst_ip_handler(const struct db_cache *cache_elem, const struct insert_data *idata, int num, char **ptr_values, char **ptr_where)
+{
+  char ptr[INET6_ADDRSTRLEN];
+
+  addr_to_str(ptr, &cache_elem->pnat->post_nat_dst_ip);
+  snprintf(*ptr_where, SPACELEFT(where_clause), where[num].string, ptr);
+  snprintf(*ptr_values, SPACELEFT(values_clause), values[num].string, ptr);
+  *ptr_where += strlen(*ptr_where);
+  *ptr_values += strlen(*ptr_values);
+}
+
+void count_post_nat_src_port_handler(const struct db_cache *cache_elem, const struct insert_data *idata, int num, char **ptr_values, char **ptr_where)
+{
+  snprintf(*ptr_where, SPACELEFT(where_clause), where[num].string, cache_elem->pnat->post_nat_src_port);
+  snprintf(*ptr_values, SPACELEFT(values_clause), values[num].string, cache_elem->pnat->post_nat_src_port);
+  *ptr_where += strlen(*ptr_where);
+  *ptr_values += strlen(*ptr_values);
+}
+
+void count_post_nat_dst_port_handler(const struct db_cache *cache_elem, const struct insert_data *idata, int num, char **ptr_values, char **ptr_where)
+{
+  snprintf(*ptr_where, SPACELEFT(where_clause), where[num].string, cache_elem->pnat->post_nat_dst_port);
+  snprintf(*ptr_values, SPACELEFT(values_clause), values[num].string, cache_elem->pnat->post_nat_dst_port);
+  *ptr_where += strlen(*ptr_where);
+  *ptr_values += strlen(*ptr_values);
+}
+
+void count_nat_event_handler(const struct db_cache *cache_elem, const struct insert_data *idata, int num, char **ptr_values, char **ptr_where)
+{
+  snprintf(*ptr_where, SPACELEFT(where_clause), where[num].string, cache_elem->pnat->nat_event);
+  snprintf(*ptr_values, SPACELEFT(values_clause), values[num].string, cache_elem->pnat->nat_event);
+  *ptr_where += strlen(*ptr_where);
+  *ptr_values += strlen(*ptr_values);
+}
+
+void PG_copy_count_timestamp_start_handler(const struct db_cache *cache_elem, const struct insert_data *idata, int num, char **ptr_values, char **ptr_where)
+{
+  static char time_str[LONGSRVBUFLEN];
+  struct tm *tme;
+
+  tme = localtime(&cache_elem->pnat->timestamp_start.tv_sec);
+  strftime(time_str, LONGSRVBUFLEN, "%Y-%m-%d %H:%M:%S", tme);
+
+  snprintf(*ptr_where, SPACELEFT(where_clause), where[num].string, cache_elem->pnat->timestamp_start.tv_sec); // dummy
+  snprintf(*ptr_values, SPACELEFT(values_clause), values[num].string, time_str);
+  *ptr_where += strlen(*ptr_where);
+  *ptr_values += strlen(*ptr_values);
+}
+
+void count_timestamp_start_handler(const struct db_cache *cache_elem, const struct insert_data *idata, int num, char **ptr_values, char **ptr_where)
+{
+  snprintf(*ptr_where, SPACELEFT(where_clause), where[num].string, cache_elem->pnat->timestamp_start.tv_sec);
+  snprintf(*ptr_values, SPACELEFT(values_clause), values[num].string, cache_elem->pnat->timestamp_start.tv_sec);
+  *ptr_where += strlen(*ptr_where);
+  *ptr_values += strlen(*ptr_values);
+}
+
+void count_timestamp_start_residual_handler(const struct db_cache *cache_elem, const struct insert_data *idata, int num, char **ptr_values, char **ptr_where)
+{
+  snprintf(*ptr_where, SPACELEFT(where_clause), where[num].string, cache_elem->pnat->timestamp_start.tv_usec);
+  snprintf(*ptr_values, SPACELEFT(values_clause), values[num].string, cache_elem->pnat->timestamp_start.tv_usec);
+  *ptr_where += strlen(*ptr_where);
+  *ptr_values += strlen(*ptr_values);
+}
+
+void PG_copy_count_timestamp_end_handler(const struct db_cache *cache_elem, const struct insert_data *idata, int num, char **ptr_values, char **ptr_where)
+{
+  static char time_str[LONGSRVBUFLEN];
+  struct tm *tme;
+
+  tme = localtime(&cache_elem->pnat->timestamp_end.tv_sec);
+  strftime(time_str, LONGSRVBUFLEN, "%Y-%m-%d %H:%M:%S", tme);
+
+  snprintf(*ptr_where, SPACELEFT(where_clause), where[num].string, cache_elem->pnat->timestamp_end.tv_sec); // dummy
+  snprintf(*ptr_values, SPACELEFT(values_clause), values[num].string, time_str);
+  *ptr_where += strlen(*ptr_where);
+  *ptr_values += strlen(*ptr_values);
+}
+
+void count_timestamp_end_handler(const struct db_cache *cache_elem, const struct insert_data *idata, int num, char **ptr_values, char **ptr_where)
+{
+  snprintf(*ptr_where, SPACELEFT(where_clause), where[num].string, cache_elem->pnat->timestamp_end.tv_sec);
+  snprintf(*ptr_values, SPACELEFT(values_clause), values[num].string, cache_elem->pnat->timestamp_end.tv_sec);
+  *ptr_where += strlen(*ptr_where);
+  *ptr_values += strlen(*ptr_values);
+}
+
+void count_timestamp_end_residual_handler(const struct db_cache *cache_elem, const struct insert_data *idata, int num, char **ptr_values, char **ptr_where)
+{
+  snprintf(*ptr_where, SPACELEFT(where_clause), where[num].string, cache_elem->pnat->timestamp_end.tv_usec);
+  snprintf(*ptr_values, SPACELEFT(values_clause), values[num].string, cache_elem->pnat->timestamp_end.tv_usec);
   *ptr_where += strlen(*ptr_where);
   *ptr_values += strlen(*ptr_values);
 }
@@ -360,8 +500,7 @@ void count_copy_timestamp_handler(const struct db_cache *cache_elem, const struc
   tme = localtime(&cache_elem->basetime);
   strftime(btime_str, LONGSRVBUFLEN, "%Y-%m-%d %H:%M:%S", tme);
 
-  if (!glob_nfacctd_sql_log) tme = localtime(&idata->now);
-  else tme = localtime(&cache_elem->endtime);
+  tme = localtime(&idata->now);
   strftime(now_str, LONGSRVBUFLEN, "%Y-%m-%d %H:%M:%S", tme);
   
   snprintf(*ptr_where, SPACELEFT(where_clause), where[num].string, cache_elem->basetime); // dummy
@@ -373,8 +512,6 @@ void count_copy_timestamp_handler(const struct db_cache *cache_elem, const struc
 void count_timestamp_handler(const struct db_cache *cache_elem, const struct insert_data *idata, int num, char **ptr_values, char **ptr_where)
 {
   time_t tme = idata->now;
-
-  if (glob_nfacctd_sql_log) tme = cache_elem->endtime;
 
   snprintf(*ptr_where, SPACELEFT(where_clause), where[num].string, cache_elem->basetime);
   snprintf(*ptr_values, SPACELEFT(values_clause), values[num].string, tme, cache_elem->basetime);
@@ -427,12 +564,6 @@ void count_flows_setclause_handler(const struct db_cache *cache_elem, const stru
   *ptr_set  += strlen(*ptr_set);
 }
 
-void count_timestamp_setclause_handler(const struct db_cache *cache_elem, const struct insert_data *idata, int num, char **ptr_set, char **ptr_none)
-{
-  snprintf(*ptr_set, SPACELEFT(set_clause), set[num].string, cache_elem->endtime);
-  *ptr_set  += strlen(*ptr_set);
-}
-
 void count_tcpflags_setclause_handler(const struct db_cache *cache_elem, const struct insert_data *idata, int num, char **ptr_set, char **ptr_none)
 {
   snprintf(*ptr_set, SPACELEFT(set_clause), set[num].string, cache_elem->tcp_flags);
@@ -442,6 +573,12 @@ void count_tcpflags_setclause_handler(const struct db_cache *cache_elem, const s
 void count_noop_setclause_handler(const struct db_cache *cache_elem, const struct insert_data *idata, int num, char **ptr_set, char **ptr_none)
 {
   strncpy(*ptr_set, set[num].string, SPACELEFT(set_clause));
+  *ptr_set  += strlen(*ptr_set);
+}
+
+void count_noop_setclause_event_handler(const struct db_cache *cache_elem, const struct insert_data *idata, int num, char **ptr_set, char **ptr_none)
+{
+  strncpy(*ptr_set, set_event[num].string, SPACELEFT(set_clause));
   *ptr_set  += strlen(*ptr_set);
 }
 

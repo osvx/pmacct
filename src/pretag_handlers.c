@@ -1,6 +1,6 @@
 /*
     pmacct (Promiscuous mode IP Accounting package)
-    pmacct is Copyright (C) 2003-2012 by Paolo Lucente
+    pmacct is Copyright (C) 2003-2013 by Paolo Lucente
 */
 
 /*
@@ -34,6 +34,7 @@ int PT_map_id_handler(char *filename, struct id_entry *e, char *value, struct pl
   struct host_addr a;
   char *endptr = NULL;
   pm_id_t j = 0, z = 0;
+  int x;
 
   e->id = 0;
   e->flags = FALSE;
@@ -80,14 +81,27 @@ int PT_map_id_handler(char *filename, struct id_entry *e, char *value, struct pl
   }
   else {
     j = strtoull(value, &endptr, 10);
-    if (!j || j > UINT32_MAX) {
-      Log(LOG_ERR, "ERROR ( %s ): Invalid ID specified. ", filename);
+    if (j > UINT32_MAX) {
+      Log(LOG_ERR, "ERROR ( %s ): Invalid TAG/ID specified. ", filename);
       return TRUE;
     } 
   }
 
   e->id = j; 
   if (z) e->id2 = z;
+
+  if (acct_type == ACCT_NF || acct_type == ACCT_SF || acct_type == ACCT_PM) {
+    for (x = 0; e->set_func[x]; x++) {
+      if (e->set_func_type[x] == PRETAG_SET_TAG) {
+        Log(LOG_ERR, "ERROR ( %s ): Multiple 'set_tag' (id) clauses part of the same statement. ", filename);
+        return TRUE;
+      }
+    }
+
+    /* feature currently only supported in nfacctd */
+    e->set_func[x] = pretag_id_handler;
+    e->set_func_type[x] = PRETAG_SET_TAG;
+  }
 
   return FALSE;
 }
@@ -96,13 +110,27 @@ int PT_map_id2_handler(char *filename, struct id_entry *e, char *value, struct p
 {
   char *endptr = NULL;
   pm_id_t j;
+  int x;
 
   j = strtoull(value, &endptr, 10);
-  if (!j || j > UINT32_MAX) {
-    Log(LOG_ERR, "ERROR ( %s ): Invalid ID2 specified. ", filename);
+  if (j > UINT32_MAX) {
+    Log(LOG_ERR, "ERROR ( %s ): Invalid TAG2/ID2 specified. ", filename);
     return TRUE;
   }
   e->id2 = j;
+
+  if (acct_type == ACCT_NF || acct_type == ACCT_SF || acct_type == ACCT_PM) {
+    for (x = 0; e->set_func[x]; x++) {
+      if (e->set_func_type[x] == PRETAG_SET_TAG2) {
+        Log(LOG_ERR, "ERROR ( %s ): Multiple 'set_tag2' (id2) clauses part of the same statement. ", filename);
+        return TRUE;
+      }
+    }
+
+    /* feature currently only supported in nfacctd */
+    e->set_func[x] = pretag_id2_handler;
+    e->set_func_type[x] = PRETAG_SET_TAG2;
+  }
 
   return FALSE;
 }
@@ -505,32 +533,45 @@ int PT_map_sample_type_handler(char *filename, struct id_entry *e, char *value, 
 
   e->sample_type.neg = pt_check_neg(&value);
 
-  while (token = extract_token(&value, ':')) {
-    switch (x) {
-    case 0:
-      tmp = atoi(token);
-      if (tmp > 1048575) { // 2^20-1: 20 bit Enterprise value
+  if (acct_type == ACCT_SF && strchr(value, ':')) {
+    while (token = extract_token(&value, ':')) {
+      switch (x) {
+      case 0:
+        tmp = atoi(token);
+        if (tmp > 1048575) { // 2^20-1: 20 bit Enterprise value
+          Log(LOG_WARNING, "WARN ( %s ): Invalid 'sample_type' value. ", filename);
+          return TRUE;
+        }
+        e->sample_type.n = tmp;
+        e->sample_type.n <<= 12;
+        break;
+      case 1:
+        tmp = atoi(token);
+        if (tmp > 4095) { // 2^12-1: 12 bit Format value
+          Log(LOG_WARNING, "WARN ( %s ): Invalid 'sample_type' value. ", filename);
+          return TRUE;
+        }
+        e->sample_type.n |= tmp;
+        break;
+      default:
         Log(LOG_WARNING, "WARN ( %s ): Invalid 'sample_type' value. ", filename);
         return TRUE;
       }
-      e->sample_type.n = tmp;
-      e->sample_type.n <<= 12;
-      break;
-    case 1:
-      tmp = atoi(token);
-      if (tmp > 4095) { // 2^12-1: 12 bit Format value
-        Log(LOG_WARNING, "WARN ( %s ): Invalid 'sample_type' value. ", filename);
-        return TRUE;
-      }
-      e->sample_type.n |= tmp;
-      break;
-    default:
+
+      x++;
+    }
+  }
+  else if (acct_type == ACCT_NF) {
+    if (!strncmp(value, "flow", strlen("flow")))
+      e->sample_type.n = NF9_FTYPE_TRAFFIC;
+    else if (!strncmp(value, "event", strlen("event")))
+      e->sample_type.n = NF9_FTYPE_EVENT;
+    else {
       Log(LOG_WARNING, "WARN ( %s ): Invalid 'sample_type' value. ", filename);
       return TRUE;
     }
-
-    x++;
   }
+  else return FALSE; /* silently ignore */
 
   for (x = 0; e->func[x]; x++) {
     if (e->func_type[x] == PRETAG_SAMPLE_TYPE) {
@@ -540,6 +581,7 @@ int PT_map_sample_type_handler(char *filename, struct id_entry *e, char *value, 
   }
 
   if (config.acct_type == ACCT_SF) e->func[x] = SF_pretag_sample_type_handler;
+  else if (config.acct_type == ACCT_NF) e->func[x] = pretag_sample_type_handler;
   if (e->func[x]) e->func_type[x] = PRETAG_SAMPLE_TYPE;
 
   return FALSE;
@@ -870,6 +912,38 @@ int PT_map_mpls_vpn_rd_handler(char *filename, struct id_entry *e, char *value, 
   else return TRUE; 
 }
 
+int PT_map_set_tos_handler(char *filename, struct id_entry *e, char *value, struct plugin_requests *req, int acct_type)
+{
+  int x = 0, len;
+  char *endptr;
+
+  e->set_tos.set = TRUE;
+  len = strlen(value);
+
+  while (x < len) {
+    if (!isdigit(value[x])) {
+      Log(LOG_ERR, "ERROR ( %s ): bad 'set_tos' value: '%s'. ", filename, value);
+      return TRUE;
+    }
+    x++;
+  }
+
+  e->set_tos.n = strtoul(value, &endptr, 10);
+  for (x = 0; e->set_func[x]; x++) {
+    if (e->set_func_type[x] == PRETAG_SET_TOS) {
+      Log(LOG_ERR, "ERROR ( %s ): Multiple 'set_tos' clauses part of the same statement. ", filename);
+      return TRUE;
+    }
+  }
+
+  /* feature currently only supported in nfacctd */
+  if (config.acct_type == ACCT_NF) e->set_func[x] = pretag_set_tos_handler;
+
+  if (e->set_func[x]) e->set_func_type[x] = PRETAG_SET_TOS;
+
+  return FALSE;
+}
+
 int PT_map_label_handler(char *filename, struct id_entry *e, char *value, struct plugin_requests *req, int acct_type)
 {
   strlcpy(e->label, value, MAX_LABEL_LEN); 
@@ -915,6 +989,7 @@ int pretag_input_handler(struct packet_ptrs *pptrs, void *unused, void *e)
   u_int8_t neg = entry->input.neg;
 
   switch(hdr->version) {
+  case 10:
   case 9:
     if (tpl->tpl[NF9_INPUT_SNMP].len == 2) { 
       if (!memcmp(&input16, pptrs->f_data+tpl->tpl[NF9_INPUT_SNMP].off, tpl->tpl[NF9_INPUT_SNMP].len))
@@ -976,6 +1051,7 @@ int pretag_output_handler(struct packet_ptrs *pptrs, void *unused, void *e)
   u_int8_t neg = entry->output.neg;
 
   switch(hdr->version) {
+  case 10:
   case 9:
     if (tpl->tpl[NF9_OUTPUT_SNMP].len == 2) {
       if (!memcmp(&output16, pptrs->f_data+tpl->tpl[NF9_OUTPUT_SNMP].off, tpl->tpl[NF9_OUTPUT_SNMP].len))
@@ -1037,6 +1113,7 @@ int pretag_nexthop_handler(struct packet_ptrs *pptrs, void *unused, void *e)
   struct template_cache_entry *tpl = (struct template_cache_entry *) pptrs->f_tpl;
 
   switch(hdr->version) {
+  case 10:
   case 9:
     if (entry->nexthop.a.family == AF_INET) {
       if (!memcmp(&entry->nexthop.a.address.ipv4, pptrs->f_data+tpl->tpl[NF9_IPV4_NEXT_HOP].off, tpl->tpl[NF9_IPV4_NEXT_HOP].len))
@@ -1070,6 +1147,7 @@ int pretag_bgp_nexthop_handler(struct packet_ptrs *pptrs, void *unused, void *e)
   if (!evaluate_lm_method(pptrs, TRUE, config.nfacctd_net, NF_NET_KEEP)) return;
 
   switch(hdr->version) {
+  case 10:
   case 9:
     if (entry->bgp_nexthop.a.family == AF_INET) {
       if (!memcmp(&entry->bgp_nexthop.a.address.ipv4, pptrs->f_data+tpl->tpl[NF9_BGP_IPV4_NEXT_HOP].off, tpl->tpl[NF9_BGP_IPV4_NEXT_HOP].len))
@@ -1235,6 +1313,7 @@ int pretag_src_as_handler(struct packet_ptrs *pptrs, void *unused, void *e)
   if (entry->last_matched == PRETAG_SRC_AS) return FALSE;
 
   switch(hdr->version) {
+  case 10:
   case 9:
     if (tpl->tpl[NF9_SRC_AS].len == 2) {
       memcpy(&asn16, pptrs->f_data+tpl->tpl[NF9_SRC_AS].off, 2);
@@ -1314,6 +1393,7 @@ int pretag_dst_as_handler(struct packet_ptrs *pptrs, void *unused, void *e)
   if (entry->last_matched == PRETAG_DST_AS) return FALSE;
 
   switch(hdr->version) {
+  case 10:
   case 9:
     if (tpl->tpl[NF9_DST_AS].len == 2) {
       memcpy(&asn16, pptrs->f_data+tpl->tpl[NF9_DST_AS].off, 2);
@@ -1514,6 +1594,17 @@ int pretag_comms_handler(struct packet_ptrs *pptrs, void *unused, void *e)
   else return TRUE;
 }
 
+int pretag_sample_type_handler(struct packet_ptrs *pptrs, void *unused, void *e)
+{
+  struct id_entry *entry = e;
+  struct struct_header_v8 *hdr = (struct struct_header_v8 *) pptrs->f_header;
+  struct struct_header_v5 *hdr5 = (struct struct_header_v5 *) pptrs->f_header;
+  struct template_cache_entry *tpl = (struct template_cache_entry *) pptrs->f_tpl;
+
+  if (entry->sample_type.n == pptrs->flow_type) return (FALSE | entry->sample_type.neg); 
+  else return (TRUE ^ entry->sample_type.neg);
+}
+
 int pretag_sampling_rate_handler(struct packet_ptrs *pptrs, void *unused, void *e)
 {
   struct id_entry *entry = e;
@@ -1541,6 +1632,7 @@ int pretag_direction_handler(struct packet_ptrs *pptrs, void *unused, void *e)
   u_int16_t direction = 0;
 
   switch (hdr->version) {
+  case 10:
   case 9:
     if (tpl->tpl[NF9_DIRECTION].len == 1) {
       memcpy(&direction, pptrs->f_data+tpl->tpl[NF9_DIRECTION].off, 1);
@@ -1569,6 +1661,15 @@ int pretag_mpls_vpn_rd_handler(struct packet_ptrs *pptrs, void *unused, void *e)
 
   if (!ret) return (FALSE | entry->mpls_vpn_rd.neg);
   else return (TRUE ^ entry->mpls_vpn_rd.neg);
+}
+
+int pretag_set_tos_handler(struct packet_ptrs *pptrs, void *unused, void *e)
+{
+  struct id_entry *entry = e;
+
+  memcpy(&pptrs->set_tos, &entry->set_tos, sizeof(s_uint8_t));
+
+  return PRETAG_MAP_RCODE_SET_TOS;
 }
 
 int pretag_id_handler(struct packet_ptrs *pptrs, void *id, void *e)

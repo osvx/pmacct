@@ -90,7 +90,11 @@ mode. Since v6 unified mode is no longer supported.
   * src_mask => mask_src (SMALLINT NOT NULL DEFAULT 0, see README.mask)
   * dst_mask => mask_dst (SMALLINT NOT NULL DEFAULT 0, see README.mask)
   * cos => cos (SMALLINT NOT NULL DEFAULT 0, see README.cos)
-  * etype => etype (INT NOT NULL DEFAULT 0, see README.etype)
+  * etype => etype (CHAR(5) NOT NULL DEFAULT ' ', see README.etype)
+  * src_host_country => country_ip_src (CHAR (2) NOT NULL DEFAULT '--', see README.country)
+  * dst_host_country => country_ip_dst (CHAR (2) NOT NULL DEFAULT '--', see README.country)
+  * sampling_rate => sampling_rate (BIGINT NOT NULL DEFAULT 0, see README.sampling_rate)
+  * pkt_len_distrib => pkt_len_distrib (CHAR(10) NOT NULL DEFAULT ' ', see README.pkt_len_distrib)
   * class => class_id (CHAR(16) NOT NOT NULL DEFAULT ' ')
   * src_mac => mac_src (macaddr NOT NULL DEFAULT '0:0:0:0:0:0')
   * dst_mac => mac_dst (macaddr NOT NULL DEFAULT '0:0:0:0:0:0')
@@ -106,12 +110,29 @@ mode. Since v6 unified mode is no longer supported.
   * tcpflags => tcp_flags (SMALLINT NOT NULL DEFAULT 0)
   * proto => ip_proto (SMALLINT NOT NULL DEFAULT 0)
   * tos => tos (INT NOT NULL DEFAULT 0)
+  * post_nat_src_host => post_nat_ip_src (inet NOT NULL DEFAULT '0.0.0.0', see README.IPv6)
+  * post_nat_dst_host => post_nat_ip_dst (inet NOT NULL DEFAULT '0.0.0.0', see README.IPv6)
+  * post_nat_src_port => post_nat_port_src (INT NOT NULL DEFAULT 0)
+  * post_nat_dst_port => post_nat_port_dst (INT NOT NULL DEFAULT 0)
+  * nat_event => nat_event (INT NOT NULL DEFAULT 0)
+  * timestamp_start => timestamp_start, timestamp_start_residual:
+    - timestamp_start timestamp without time zone NOT NULL DEFAULT '0000-01-01 00:00:00', see README.timestamp)
+    - timestamp_start_residual INT NOT NULL DEFAULT 0, see README.timestamp)
+  * timestamp_end => timestamp_end, timestamp_end_residual:
+    - timestamp_end timestamp without time zone NOT NULL DEFAULT '0000-01-01 00:00:00', see README.timestamp)
+    - timestamp_end_residual INT NOT NULL DEFAULT 0, see README.timestamp)
 
-- Counters and time reference need always to be defined as part of the SQL schema:
-  * packets (INT UNSIGNED NOT NULL)
-  * bytes (BIGINT UNSIGNED NOT NULL)
-  * stamp_inserted (timestamp without time zone NOT NULL DEFAULT '0000-01-01 00:00:00', enabled by sql_history)
-  * stamp_updated (timestamp without time zone, enabled by sql_history)
+- If not using COPY statements (sql_use_copy, sql_dont_try_update both enabled)
+  'packets' and 'bytes' counters need to be defined as part of the SQL schema
+  whenever traffic flows are being accounted for; they are not required, and
+  are zeroed, if accounting for events, ie. using Cisco NEL; if instead COPY
+  is in use, 'packets' and 'bytes' counters are mandatory. 'stamp_inserted' and
+  'stamp_updated' time references are mandatory only if temporal aggregation
+  (sql_history) is enabled:
+  * packets (INT NOT NULL)
+  * bytes (BIGINT NOT NULL)
+  * stamp_inserted (timestamp without time zone NOT NULL DEFAULT '0000-01-01 00:00:00')
+  * stamp_updated (timestamp without time zone)
 
 - What is the difference between 'typed' and 'unified' modes ? 
 It applies to IP tables only (ie. not to BGP ones). The 'unified' table has IP addresses

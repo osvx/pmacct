@@ -1,6 +1,6 @@
 /*  
     pmacct (Promiscuous mode IP Accounting package)
-    pmacct is Copyright (C) 2003-2012 by Paolo Lucente
+    pmacct is Copyright (C) 2003-2013 by Paolo Lucente
 */
 
 /*
@@ -35,6 +35,7 @@
 #define ETH_ADDR_LEN    	6               /* Octets in one ethernet addr   */
 #define ETHER_HDRLEN    	14
 #define ETHERMTU		1500
+#define ETHER_JUMBO_MTU		9000
 #define IEEE8021Q_TAGLEN	4
 #define IEEE8021AH_LEN		10
 #define PPP_TAGLEN              2
@@ -47,6 +48,15 @@ struct eth_header
   u_int8_t  ether_dhost[ETH_ADDR_LEN];      /* destination eth addr */
   u_int8_t  ether_shost[ETH_ADDR_LEN];      /* source ether addr    */
   u_int16_t ether_type;                     /* packet type ID field */
+};
+
+#define CHDLC_MCAST_ADDR	0x8F
+#define CHDLC_FIXED_CONTROL	0x00
+/* CHDLC header */
+struct chdlc_header {
+  u_int8_t address;
+  u_int8_t control;
+  u_int16_t protocol;
 };
 
 #define TR_RIF_LENGTH(trp)		((ntohs((trp)->token_rcf) & 0x1f00) >> 8)
@@ -271,6 +281,7 @@ struct packet_ptrs {
   u_char *f_data; /* ptr to NetFlow data */ 
   u_char *f_tpl; /* ptr to NetFlow V9 template */
   u_char *f_status; /* ptr to status table entry */
+  u_char *f_status_g; /* ptr to status table entry. global per f_agent */
   u_char *idtable; /* ptr to pretag table map */
   u_char *bpas_table; /* ptr to bgp_peer_as_src table map */
   u_char *blp_table; /* ptr to bgp_src_local_pref table map */
@@ -283,6 +294,7 @@ struct packet_ptrs {
   u_int16_t l3_proto; /* layer-3 protocol: IPv4, IPv6 */
   int (*l3_handler)(register struct packet_ptrs *); /* layer-3 protocol handler */
   u_int16_t l4_proto; /* layer-4 protocol */
+  u_int8_t flow_type; /* Flow, NAT event, etc. */
   pm_id_t tag; /* pre tag id */
   pm_id_t tag2; /* pre tag id2 */
   pm_id_t bpas; /* bgp_peer_as_src */
@@ -293,6 +305,7 @@ struct packet_ptrs {
   pm_id_t bta2; /* bgp_to_agent (cont.d: 64bits more for IPv6 addresses) */
   pm_id_t bitr; /* bgp_iface_to_rd */
   pm_id_t st; /* sampling_map */
+  s_uint8_t set_tos; /* pretag map: set_tos feature */
   char *bgp_src; /* pointer to bgp_node structure for source prefix, if any */  
   char *bgp_dst; /* pointer to bgp_node structure for destination prefix, if any */ 
   char *bgp_src_info; /* pointer to bgp_info structure for source prefix, if any */  
@@ -359,9 +372,15 @@ struct pkt_primitives {
   u_int8_t proto;
   u_int32_t ifindex_in;
   u_int32_t ifindex_out;
+#if defined (WITH_GEOIP)
+  pm_country_t src_ip_country;
+  pm_country_t dst_ip_country;
+#endif
   pm_id_t id;
   pm_id_t id2;
   pm_class_t class;
+  u_int32_t sampling_rate;
+  u_int16_t pkt_len_distrib;
 };
 
 struct pkt_data {
@@ -369,6 +388,7 @@ struct pkt_data {
   pm_counter_t pkt_len;
   pm_counter_t pkt_num;
   pm_counter_t flo_num;
+  u_int8_t flow_type;
   u_int32_t tcp_flags; /* XXX */
   struct timeval time_start;
   struct timeval time_end;
@@ -403,12 +423,15 @@ struct pkt_extras {
   struct host_addr bgp_next_hop;
 };
 
-#define PKT_MSG_SIZE 1550
+// #define PKT_MSG_SIZE 1550
+#define PKT_MSG_SIZE 10000
 struct pkt_msg {
   struct sockaddr agent;
   u_int32_t seqno;
   u_int16_t len;
   u_char payload[PKT_MSG_SIZE];
+  pm_id_t id;
+  pm_id_t id2;
   u_int16_t pad;
 };
 
@@ -416,6 +439,17 @@ struct pkt_msg {
 #define MAX_BGP_STD_COMMS       96
 #define MAX_BGP_EXT_COMMS       96
 #define MAX_BGP_ASPATH          128
+
+struct extra_primitives {
+  u_int16_t off_pkt_bgp_primitives;
+  u_int16_t off_pkt_nat_primitives;
+};
+
+struct primitives_ptrs {
+  struct pkt_data *data;
+  struct pkt_bgp_primitives *pbgp;
+  struct pkt_nat_primitives *pnat;
+};
 
 struct pkt_bgp_primitives {
   as_t peer_src_as;
@@ -434,6 +468,16 @@ struct pkt_bgp_primitives {
   u_int32_t src_med;
   rd_t mpls_vpn_rd;
   u_int32_t pad;
+};
+
+struct pkt_nat_primitives {
+  struct host_addr post_nat_src_ip;
+  struct host_addr post_nat_dst_ip;
+  u_int16_t post_nat_src_port;
+  u_int16_t post_nat_dst_port;
+  u_int8_t nat_event;
+  struct timeval timestamp_start; /* XXX: clean-up: to be moved in a separate structure */
+  struct timeval timestamp_end; /* XXX: clean-up: to be moved in a separate structure */
 };
 
 /* same as above but pointers in place of strings */

@@ -1,6 +1,6 @@
 /*
     pmacct (Promiscuous mode IP Accounting package)
-    pmacct is Copyright (C) 2003-2012 by Paolo Lucente
+    pmacct is Copyright (C) 2003-2013 by Paolo Lucente
 */
 
 /*
@@ -75,6 +75,10 @@ EXT void set_shadow_status(struct packet_ptrs *);
 EXT void set_default_preferences(struct configuration *);
 EXT FILE *open_logfile(char *);
 EXT FILE *open_print_output_file(char *, time_t);
+EXT void handle_dynname_internal_strings(char *, int, char *);
+EXT void handle_dynname_internal_strings_same(char *, int, char *);
+EXT int sql_history_to_secs(int, int);
+EXT void close_print_output_file(FILE *, char *, time_t);
 EXT void evaluate_bgp_aspath_radius(char *, int, int);
 EXT void copy_stdcomm_to_asn(char *, as_t *, int);
 EXT void *Malloc(unsigned int);
@@ -83,8 +87,12 @@ EXT int check_allow(struct hosts_table *, struct sockaddr *);
 EXT void load_bgp_md5_file(char *, struct bgp_md5_table *);
 EXT void unload_bgp_md5_file(struct bgp_md5_table *);
 EXT int BTA_find_id(struct id_table *, struct packet_ptrs *, pm_id_t *, pm_id_t *);
-
-EXT unsigned int str_to_addr(const char *, struct host_addr *);
+EXT void calc_refresh_timeout(time_t, time_t, int *);
+EXT int load_tags(char *, struct pretag_filter *, char *);
+EXT int evaluate_tags(struct pretag_filter *, pm_id_t);
+EXT void load_pkt_len_distrib_bins();
+EXT void evaluate_pkt_len_distrib(struct pkt_data *);
+EXT char *write_sep(char *, int *);
 
 EXT struct packet_ptrs *copy_packet_ptrs(struct packet_ptrs *);
 EXT void free_packet_ptrs(struct packet_ptrs *);

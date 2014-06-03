@@ -1,6 +1,6 @@
 /*
     pmacct (Promiscuous mode IP Accounting package)
-    pmacct is Copyright (C) 2003-2011 by Paolo Lucente
+    pmacct is Copyright (C) 2003-2013 by Paolo Lucente
 */
 
 /*
@@ -29,7 +29,7 @@
 
 struct channels_list_entry;
 typedef void (*pkt_handler) (struct channels_list_entry *, struct packet_ptrs *, char **);
-typedef int (*ring_cleaner) (void *);
+typedef int (*ring_cleaner) (void *, int);
 typedef pm_counter_t (*skip_func) (pm_counter_t);
 
 struct ring {
@@ -64,6 +64,7 @@ struct aggregate_filter {
 
 struct channels_list_entry {
   u_int64_t aggregation;
+  u_int64_t aggregation_2;
   u_int32_t buf;	/* buffer base */
   u_int32_t bufptr;	/* buffer current */
   u_int32_t bufend;	/* buffer end; max 4Gb */
@@ -73,6 +74,7 @@ struct channels_list_entry {
   ring_cleaner clean_func;
   u_int8_t request;					/* does the plugin support on-request wakeup ? */
   u_int8_t reprocess;					/* do we need to jump back for packet reprocessing ? */
+  int datasize;
   int bufsize;		
   int same_aggregate;
   pkt_handler phandler[N_PRIMITIVES];
@@ -83,6 +85,7 @@ struct channels_list_entry {
   struct aggregate_filter agg_filter; 			/* filter aggregates basing on L2-L4 primitives */
   struct sampling s;
   struct plugins_list_entry *plugin;			/* backpointer to the plugin the actual channel belongs to */
+  struct extra_primitives extras;			/* offset for non-standard aggregation primitives structures */
 };
 
 #if (defined __PLUGIN_HOOKS_C)
@@ -102,17 +105,15 @@ EXT struct channels_list_entry *insert_pipe_channel(int, struct configuration *,
 EXT void delete_pipe_channel(int);
 EXT void sort_pipe_channels();
 EXT void init_pipe_channels();
-EXT int evaluate_tags(struct pretag_filter *, pm_id_t);
 EXT int evaluate_filters(struct aggregate_filter *, char *, struct pcap_pkthdr *);
 EXT void recollect_pipe_memory(struct channels_list_entry *);
 EXT void init_random_seed();
 EXT void fill_pipe_buffer();
 EXT int check_shadow_status(struct packet_ptrs *, struct channels_list_entry *);
-EXT int pkt_data_clean(void *);
-EXT int pkt_payload_clean(void *);
-EXT int pkt_msg_clean(void *);
-EXT int pkt_extras_clean(void *);
-EXT int pkt_bgp_clean(void *);
+EXT int pkt_data_clean(void *, int);
+EXT int pkt_payload_clean(void *, int);
+EXT int pkt_msg_clean(void *, int);
+EXT int pkt_extras_clean(void *, int);
 EXT void evaluate_sampling(struct sampling *, pm_counter_t *, pm_counter_t *, pm_counter_t *);
 EXT pm_counter_t take_simple_random_skip(pm_counter_t);
 EXT pm_counter_t take_simple_systematic_skip(pm_counter_t);
@@ -140,6 +141,10 @@ EXT void pgsql_plugin(int, struct configuration *, void *);
 
 #ifdef WITH_SQLITE3
 EXT void sqlite3_plugin(int, struct configuration *, void *);
+#endif
+
+#ifdef WITH_MONGODB
+EXT void mongodb_plugin(int, struct configuration *, void *);
 #endif
 
 EXT void stats_plugin(int, struct configuration *, void *);

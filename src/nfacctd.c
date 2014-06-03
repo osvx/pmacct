@@ -1,6 +1,6 @@
 /*  
     pmacct (Promiscuous mode IP Accounting package)
-    pmacct is Copyright (C) 2003-2012 by Paolo Lucente
+    pmacct is Copyright (C) 2003-2013 by Paolo Lucente
 */
 
 /*
@@ -46,7 +46,7 @@ pid_t failed_plugins[MAX_N_PLUGINS]; /* plugins failed during startup phase */
 /* Functions */
 void usage_daemon(char *prog_name)
 {
-  printf("%s\n", NFACCTD_USAGE_HEADER);
+  printf("%s (%s)\n", NFACCTD_USAGE_HEADER, PMACCT_BUILD);
   printf("Usage: %s [ -D | -d ] [ -L IP address ] [ -l port ] [ -c primitive [ , ... ] ] [ -P plugin [ , ... ] ]\n", prog_name);
   printf("       %s [ -f config_file ]\n", prog_name);
   printf("       %s [ -h ]\n", prog_name);
@@ -55,11 +55,11 @@ void usage_daemon(char *prog_name)
   printf("  -L  \tBind to the specified IP address\n");
   printf("  -l  \tListen on the specified UDP port\n");
   printf("  -f  \tLoad configuration from the specified file\n");
-  printf("  -c  \t[ src_mac | dst_mac | vlan | src_host | dst_host | src_net | dst_net | src_port | dst_port |\n\t tos | proto | src_as | dst_as | sum_mac | sum_host | sum_net | sum_as | sum_port | tag |\n\t tag2 | flows | class | tcpflags | in_iface | out_iface | src_mask | dst_mask | cos | etype | none ] \n\tAggregation string (DEFAULT: src_host)\n");
+  printf("  -c  \t[ src_mac | dst_mac | vlan | src_host | dst_host | src_net | dst_net | src_port | dst_port |\n\t tos | proto | src_as | dst_as | sum_mac | sum_host | sum_net | sum_as | sum_port | tag |\n\t tag2 | flows | class | tcpflags | in_iface | out_iface | src_mask | dst_mask | cos | etype |\n\t sampling_rate | src_host_country | dst_host_country | pkt_len_distrib | post_nat_src_host |\n\t post_nat_dst_host | post_nat_src_port | post_nat_dst_port | nat_event | timestamp_start |\n\t timestamp_end | none ]\n\tAggregation string (DEFAULT: src_host)\n");
   printf("  -D  \tDaemonize\n"); 
   printf("  -n  \tPath to a file containing Network definitions\n");
   printf("  -o  \tPath to a file containing Port definitions\n");
-  printf("  -P  \t[ memory | print | mysql | pgsql | sqlite3 | tee ] \n\tActivate plugin\n"); 
+  printf("  -P  \t[ memory | print | mysql | pgsql | sqlite3 | mongodb | tee ] \n\tActivate plugin\n"); 
   printf("  -d  \tEnable debug\n");
   printf("  -S  \t[ auth | mail | daemon | kern | user | local[0-7] ] \n\tLog to the specified syslog facility\n");
   printf("  -F  \tWrite Core Process PID into the specified file\n");
@@ -266,10 +266,6 @@ int main(int argc,char **argv, char **envp)
       strlcpy(cfg_cmdline[rows], "sql_refresh_time: ", SRVBUFLEN);
       strncat(cfg_cmdline[rows], optarg, CFG_LINE_LEN(cfg_cmdline[rows]));
       rows++;
-      cfg_cmdline[rows] = malloc(SRVBUFLEN);
-      strlcpy(cfg_cmdline[rows], "print_refresh_time: ", SRVBUFLEN);
-      strncat(cfg_cmdline[rows], optarg, CFG_LINE_LEN(cfg_cmdline[rows]));
-      rows++;
       break;
     case 'v':
       strlcpy(cfg_cmdline[rows], "sql_table_version: ", SRVBUFLEN);
@@ -317,8 +313,11 @@ int main(int argc,char **argv, char **envp)
   while(list) {
     list->cfg.acct_type = ACCT_NF;
     set_default_preferences(&list->cfg);
-    if (!strcmp(list->name, "default") && !strcmp(list->type.string, "core")) 
+    if (!strcmp(list->name, "default") && !strcmp(list->type.string, "core")) { 
       memcpy(&config, &list->cfg, sizeof(struct configuration)); 
+      config.name = list->name;
+      config.type = list->type.string;
+    }
     list = list->next;
   }
 
@@ -377,18 +376,28 @@ int main(int argc,char **argv, char **envp)
       }
       else {
 	list->cfg.data_type = PIPE_TYPE_METADATA;
+
+	if (list->cfg.what_to_count_2 & (COUNT_POST_NAT_SRC_HOST|COUNT_POST_NAT_DST_HOST|
+			COUNT_POST_NAT_SRC_PORT|COUNT_POST_NAT_DST_PORT|COUNT_NAT_EVENT|
+			COUNT_TIMESTAMP_START|COUNT_TIMESTAMP_END))
+	  list->cfg.data_type |= PIPE_TYPE_NAT;
+
 	evaluate_sums(&list->cfg.what_to_count, list->name, list->type.string);
-	if (!list->cfg.what_to_count) {
+	if (!list->cfg.what_to_count && !list->cfg.what_to_count_2) {
 	  Log(LOG_WARNING, "WARN ( %s/%s ): defaulting to SRC HOST aggregation.\n", list->name, list->type.string);
 	  list->cfg.what_to_count |= COUNT_SRC_HOST;
 	}
-	if ((list->cfg.what_to_count & (COUNT_SRC_AS|COUNT_DST_AS|COUNT_SUM_AS)) && !list->cfg.networks_file && list->cfg.nfacctd_as & NF_AS_NEW) {
-	  Log(LOG_ERR, "ERROR ( %s/%s ): AS aggregation selected but NO 'networks_file' specified. Exiting...\n\n", list->name, list->type.string);
-	  exit(1);
-	}
-        if ((list->cfg.what_to_count & (COUNT_SRC_AS|COUNT_DST_AS|COUNT_SUM_AS)) && !list->cfg.nfacctd_bgp && list->cfg.nfacctd_as == NF_AS_BGP) {
-          Log(LOG_ERR, "ERROR ( %s/%s ): AS aggregation selected but 'bgp_daemon' is not enabled. Exiting...\n\n", list->name, list->type.string);
-          exit(1);
+	if (list->cfg.what_to_count & (COUNT_SRC_AS|COUNT_DST_AS|COUNT_SUM_AS)) {
+	  if (!list->cfg.networks_file && list->cfg.nfacctd_as & NF_AS_NEW) {
+	    Log(LOG_ERR, "ERROR ( %s/%s ): AS aggregation selected but NO 'networks_file' specified. Exiting...\n\n", list->name, list->type.string);
+	    exit(1);
+	  }
+          if (!list->cfg.nfacctd_bgp && list->cfg.nfacctd_as == NF_AS_BGP) {
+            Log(LOG_ERR, "ERROR ( %s/%s ): AS aggregation selected but 'bgp_daemon' is not enabled. Exiting...\n\n", list->name, list->type.string);
+            exit(1);
+	  }
+          if (list->cfg.nfacctd_as & NF_AS_FALLBACK && list->cfg.networks_file)
+            list->cfg.nfacctd_as |= NF_AS_NEW;
         }
 	if (list->cfg.what_to_count & (COUNT_SRC_NET|COUNT_DST_NET|COUNT_SUM_NET|COUNT_SRC_NMASK|COUNT_DST_NMASK|COUNT_PEER_DST_IP)) {
 	  if (!list->cfg.nfacctd_net) {
@@ -404,6 +413,8 @@ int main(int argc,char **argv, char **envp)
 	      Log(LOG_ERR, "ERROR ( %s/%s ): network aggregation selected but none of 'bgp_daemon', 'isis_daemon', 'networks_file', 'networks_mask' is specified. Exiting ...\n\n", list->name, list->type.string);
 	      exit(1);
 	    }
+            if (list->cfg.nfacctd_net & NF_NET_FALLBACK && list->cfg.networks_file)
+              list->cfg.nfacctd_net |= NF_NET_NEW;
 	  }
 	}
 
@@ -413,6 +424,7 @@ int main(int argc,char **argv, char **envp)
 	list->cfg.what_to_count |= COUNT_COUNTERS;
       }
     }
+
     list = list->next;
   }
 
@@ -467,8 +479,8 @@ int main(int argc,char **argv, char **envp)
   }
 
   /* bind socket to port */
-  rc = Setsocksize(config.sock, SOL_SOCKET, SO_REUSEADDR, (char *)&yes, sizeof(yes));
-  if (rc < 0) Log(LOG_ERR, "WARN ( default/core ): Setsocksize() failed for SO_REUSEADDR.\n");
+  rc = setsockopt(config.sock, SOL_SOCKET, SO_REUSEADDR, (char *)&yes, sizeof(yes));
+  if (rc < 0) Log(LOG_ERR, "WARN ( default/core ): setsockopt() failed for SO_REUSEADDR.\n");
 
   if (config.pipe_size) {
     rc = Setsocksize(config.sock, SOL_SOCKET, SO_RCVBUF, &config.pipe_size, sizeof(config.pipe_size));
@@ -590,6 +602,12 @@ int main(int argc,char **argv, char **envp)
   if (config.nfacctd_bgp) {
     Log(LOG_ERR, "ERROR ( default/core ): 'bgp_daemon' is available only with threads (--enable-threads). Exiting.\n");
     exit(1);
+  }
+#endif
+
+#if defined WITH_GEOIP
+  if (config.geoip_ipv4_file || config.geoip_ipv6_file) {
+    req.bpf_filter = TRUE;
   }
 #endif
 
@@ -853,6 +871,7 @@ void process_v1_packet(unsigned char *pkt, u_int16_t len, struct packet_ptrs *pp
   exp_v1 = (struct struct_export_v1 *)pkt;
 
   reset_mac(pptrs);
+  pptrs->flow_type = NF9_FTYPE_TRAFFIC;
 
   if ((count <= V1_MAXFLOWS) && ((count*NfDataV1Sz)+NfHdrV1Sz == len)) {
     while (count) {
@@ -906,8 +925,10 @@ void process_v5_packet(unsigned char *pkt, u_int16_t len, struct packet_ptrs *pp
   pkt += NfHdrV5Sz; 
   exp_v5 = (struct struct_export_v5 *)pkt;
   pptrs->f_status = nfv578_check_status(pptrs);
+  pptrs->f_status_g = NULL;
 
   reset_mac(pptrs);
+  pptrs->flow_type = NF9_FTYPE_TRAFFIC;
 
   if ((count <= V5_MAXFLOWS) && ((count*NfDataV5Sz)+NfHdrV5Sz == len)) {
     while (count) {
@@ -968,8 +989,10 @@ void process_v7_packet(unsigned char *pkt, u_int16_t len, struct packet_ptrs *pp
   pkt += NfHdrV7Sz;
   exp_v7 = (struct struct_export_v7 *)pkt;
   pptrs->f_status = nfv578_check_status(pptrs);
+  pptrs->f_status_g = NULL;
 
   reset_mac(pptrs);
+  pptrs->flow_type = NF9_FTYPE_TRAFFIC;
 
   if ((count <= V7_MAXFLOWS) && ((count*NfDataV7Sz)+NfHdrV7Sz == len)) {
     while (count) {
@@ -1030,9 +1053,11 @@ void process_v8_packet(unsigned char *pkt, u_int16_t len, struct packet_ptrs *pp
   pkt += NfHdrV8Sz;
   exp_v8 = pkt;
   pptrs->f_status = nfv578_check_status(pptrs);
+  pptrs->f_status_g = NULL;
 
   reset_mac(pptrs);
   reset_ip4(pptrs);
+  pptrs->flow_type = NF9_FTYPE_TRAFFIC;
 
   if ((count <= v8_handlers[hdr_v8->aggregation].max_flows) && ((count*v8_handlers[hdr_v8->aggregation].exp_size)+NfHdrV8Sz <= len)) {
     while (count) {
@@ -1074,7 +1099,7 @@ void process_v9_packet(unsigned char *pkt, u_int16_t len, struct packet_ptrs_vec
   struct template_cache_entry *tpl;
   struct data_hdr_v9 *data_hdr;
   struct packet_ptrs *pptrs = &pptrsv->v4;
-  u_int16_t fid, off = 0, flowoff, flowsetlen, flow_type, direction, FlowSeqInc = 0; 
+  u_int16_t fid, off = 0, flowoff, flowsetlen, direction, FlowSeqInc = 0; 
   u_int32_t HdrSz = 0, SourceId = 0, FlowSeq = 0;
 
   if (version == 9) {
@@ -1096,18 +1121,28 @@ void process_v9_packet(unsigned char *pkt, u_int16_t len, struct packet_ptrs_vec
   pptrs->f_header = pkt;
   pkt += HdrSz;
   off += HdrSz; 
-  pptrsv->v4.f_status = nfv9_check_status(pptrs, SourceId, FlowSeq);
+  pptrsv->v4.f_status = nfv9_check_status(pptrs, SourceId, 0, FlowSeq, TRUE);
   set_vector_f_status(pptrsv);
+  pptrsv->v4.f_status_g = nfv9_check_status(pptrs, 0, NF9_OPT_SCOPE_SYSTEM, 0, FALSE);
+  set_vector_f_status_g(pptrsv);
 
   process_flowset:
   if (off+NfDataHdrV9Sz >= len) { 
-    notify_malf_packet(LOG_INFO, "INFO: unable to read next Flowset; incomplete NetFlow v9/IPFIX packet",
-		    (struct sockaddr *) pptrsv->v4.f_agent);
+    notify_malf_packet(LOG_INFO, "INFO: unable to read next Flowset (incomplete NetFlow v9/IPFIX packet)",
+			(struct sockaddr *) pptrsv->v4.f_agent);
     xflow_tot_bad_datagrams++;
     return;
   }
 
   data_hdr = (struct data_hdr_v9 *)pkt;
+
+  if (data_hdr->flow_len == 0) {
+    notify_malf_packet(LOG_INFO, "INFO: unable to read next Flowset (NetFlow v9/IPFIX packet claiming flow_len 0!)",
+			(struct sockaddr *) pptrsv->v4.f_agent);
+    xflow_tot_bad_datagrams++;
+    return;
+  }
+
   fid = ntohs(data_hdr->flow_id);
   if (fid == 0 || fid == 2) { /* template: 0 NetFlow v9, 2 IPFIX */ 
     unsigned char *tpl_ptr = pkt;
@@ -1121,13 +1156,14 @@ void process_v9_packet(unsigned char *pkt, u_int16_t len, struct packet_ptrs_vec
     while (flowoff < flowsetlen) {
       template_hdr = (struct template_hdr_v9 *) tpl_ptr;
       if (off+flowsetlen > len) { 
-        notify_malf_packet(LOG_INFO, "INFO: unable to read next Template Flowset; incomplete NetFlow v9/IPFIX packet",
+        notify_malf_packet(LOG_INFO, "INFO: unable to read next Template Flowset (incomplete NetFlow v9/IPFIX packet)",
 		        (struct sockaddr *) pptrsv->v4.f_agent);
         xflow_tot_bad_datagrams++;
         return;
       }
 
-      handle_template(template_hdr, pptrs, fid, SourceId, &pens);
+      tpl = handle_template(template_hdr, pptrs, fid, SourceId, &pens, flowsetlen-flowoff);
+      if (!tpl) return;
 
       tpl_ptr += sizeof(struct template_hdr_v9)+(ntohs(template_hdr->num)*sizeof(struct template_field_v9))+(pens*sizeof(u_int32_t)); 
       flowoff += sizeof(struct template_hdr_v9)+(ntohs(template_hdr->num)*sizeof(struct template_field_v9))+(pens*sizeof(u_int32_t)); 
@@ -1147,13 +1183,14 @@ void process_v9_packet(unsigned char *pkt, u_int16_t len, struct packet_ptrs_vec
     while (flowoff < flowsetlen) {
       opt_template_hdr = (struct options_template_hdr_v9 *) tpl_ptr;
       if (off+flowsetlen > len) {
-        notify_malf_packet(LOG_INFO, "INFO: unable to read next Options Template Flowset; incomplete NetFlow v9/IPFIX packet",
+        notify_malf_packet(LOG_INFO, "INFO: unable to read next Options Template Flowset (incomplete NetFlow v9/IPFIX packet)",
                         (struct sockaddr *) pptrsv->v4.f_agent);
         xflow_tot_bad_datagrams++;
         return;
       }
 
-      handle_template((struct template_hdr_v9 *)opt_template_hdr, pptrs, fid, SourceId, NULL);
+      tpl = handle_template((struct template_hdr_v9 *)opt_template_hdr, pptrs, fid, SourceId, NULL, flowsetlen-flowoff);
+      if (!tpl) return;
 
       /* Increment is not precise for NetFlow v9 but will work */
       tpl_ptr += sizeof(struct options_template_hdr_v9)+((ntohs(opt_template_hdr->scope_len)+ntohs(opt_template_hdr->option_len))*sizeof(struct template_field_v9));
@@ -1231,6 +1268,9 @@ void process_v9_packet(unsigned char *pkt, u_int16_t len, struct packet_ptrs_vec
 	  struct pkt_classifier css;
 	  pm_class_t class_id = 0, class_int_id = 0;
 
+	  /* Handling the global option scoping case */
+	  if (tpl->tpl[NF9_OPT_SCOPE_SYSTEM].len) entry = (struct xflow_status_entry *) pptrs->f_status_g;
+
 	  memcpy(&class_id, pkt+tpl->tpl[NF9_APPLICATION_ID].off, 4);
 
           if (entry) centry = search_class_id_status_table(entry->class, class_id);
@@ -1277,11 +1317,11 @@ void process_v9_packet(unsigned char *pkt, u_int16_t len, struct packet_ptrs_vec
         pptrs->f_data = pkt;
 	pptrs->f_tpl = (u_char *) tpl;
 	reset_net_status_v(pptrsv);
-	flow_type = NF_evaluate_flow_type(tpl, pptrs);
+	pptrs->flow_type = NF_evaluate_flow_type(tpl, pptrs);
 	direction = NF_evaluate_direction(tpl, pptrs);
 
 	/* we need to understand the IP protocol version in order to build the fake packet */ 
-	switch (flow_type) {
+	switch (pptrs->flow_type) {
 	case NF9_FTYPE_IPV4:
 	  if (req->bpf_filter) {
 	    reset_mac(pptrs);
@@ -1316,8 +1356,11 @@ void process_v9_packet(unsigned char *pkt, u_int16_t len, struct packet_ptrs_vec
 
 	  if (tpl->tpl[NF9_APPLICATION_ID].len == 4) {
 	    struct xflow_status_entry *entry = (struct xflow_status_entry *) pptrs->f_status;
+	    struct xflow_status_entry *gentry = (struct xflow_status_entry *) pptrs->f_status_g;
+	    pm_class_t class_id = 0;
 
-	    if (entry) pptrs->class = NF_evaluate_classifiers(entry->class, pptrs->f_data+tpl->tpl[NF9_APPLICATION_ID].off);
+	    memcpy(&class_id, pkt+tpl->tpl[NF9_APPLICATION_ID].off, 4);
+	    if (entry) pptrs->class = NF_evaluate_classifiers(entry->class, &class_id, gentry);
 	  }
 	  if (config.nfacctd_isis) isis_srcdst_lookup(pptrs);
 	  if (config.nfacctd_bgp_to_agent_map) BTA_find_id((struct id_table *)pptrs->bta_table, pptrs, &pptrs->bta, &pptrs->bta2);
@@ -1334,6 +1377,7 @@ void process_v9_packet(unsigned char *pkt, u_int16_t len, struct packet_ptrs_vec
 	  pptrsv->v6.f_header = pptrs->f_header;
 	  pptrsv->v6.f_data = pptrs->f_data;
 	  pptrsv->v6.f_tpl = pptrs->f_tpl;
+	  pptrsv->v6.flow_type = pptrs->flow_type;
 
 	  if (req->bpf_filter) {
 	    reset_mac(&pptrsv->v6);
@@ -1368,8 +1412,11 @@ void process_v9_packet(unsigned char *pkt, u_int16_t len, struct packet_ptrs_vec
 
 	  if (tpl->tpl[NF9_APPLICATION_ID].len == 4) {
 	    struct xflow_status_entry *entry = (struct xflow_status_entry *) pptrs->f_status;
+	    struct xflow_status_entry *gentry = (struct xflow_status_entry *) pptrs->f_status_g;
+	    pm_class_t class_id = 0;
 
-	    if (entry) pptrsv->v6.class = NF_evaluate_classifiers(entry->class, pptrsv->v6.f_data+tpl->tpl[NF9_APPLICATION_ID].off);
+	    memcpy(&class_id, pkt+tpl->tpl[NF9_APPLICATION_ID].off, 4);
+	    if (entry) pptrsv->v6.class = NF_evaluate_classifiers(entry->class, &class_id, gentry);
 	  }
 	  if (config.nfacctd_isis) isis_srcdst_lookup(&pptrsv->v6);
 	  if (config.nfacctd_bgp_to_agent_map) BTA_find_id((struct id_table *)pptrs->bta_table, &pptrsv->v6, &pptrsv->v6.bta, &pptrsv->v6.bta2);
@@ -1386,6 +1433,7 @@ void process_v9_packet(unsigned char *pkt, u_int16_t len, struct packet_ptrs_vec
 	  pptrsv->vlan4.f_header = pptrs->f_header;
 	  pptrsv->vlan4.f_data = pptrs->f_data;
 	  pptrsv->vlan4.f_tpl = pptrs->f_tpl;
+	  pptrsv->vlan4.flow_type = pptrs->flow_type;
 
 	  if (req->bpf_filter) {
 	    reset_mac_vlan(&pptrsv->vlan4); 
@@ -1422,8 +1470,11 @@ void process_v9_packet(unsigned char *pkt, u_int16_t len, struct packet_ptrs_vec
 
 	  if (tpl->tpl[NF9_APPLICATION_ID].len == 4) {
 	    struct xflow_status_entry *entry = (struct xflow_status_entry *) pptrs->f_status;
+	    struct xflow_status_entry *gentry = (struct xflow_status_entry *) pptrs->f_status_g;
+            pm_class_t class_id = 0;
 
-	    if (entry) pptrsv->vlan4.class = NF_evaluate_classifiers(entry->class, pptrsv->vlan4.f_data+tpl->tpl[NF9_APPLICATION_ID].off);
+            memcpy(&class_id, pkt+tpl->tpl[NF9_APPLICATION_ID].off, 4);
+	    if (entry) pptrsv->vlan4.class = NF_evaluate_classifiers(entry->class, &class_id, gentry);
 	  } 
 	  if (config.nfacctd_isis) isis_srcdst_lookup(&pptrsv->vlan4);
 	  if (config.nfacctd_bgp_to_agent_map) BTA_find_id((struct id_table *)pptrs->bta_table, &pptrsv->vlan4, &pptrsv->vlan4.bta, &pptrsv->vlan4.bta2);
@@ -1440,6 +1491,7 @@ void process_v9_packet(unsigned char *pkt, u_int16_t len, struct packet_ptrs_vec
 	  pptrsv->vlan6.f_header = pptrs->f_header;
 	  pptrsv->vlan6.f_data = pptrs->f_data;
 	  pptrsv->vlan6.f_tpl = pptrs->f_tpl;
+	  pptrsv->vlan6.flow_type = pptrs->flow_type;
 
 	  if (req->bpf_filter) {
 	    reset_mac_vlan(&pptrsv->vlan6);
@@ -1476,8 +1528,11 @@ void process_v9_packet(unsigned char *pkt, u_int16_t len, struct packet_ptrs_vec
 
 	  if (tpl->tpl[NF9_APPLICATION_ID].len == 4) {
 	    struct xflow_status_entry *entry = (struct xflow_status_entry *) pptrs->f_status;
+	    struct xflow_status_entry *gentry = (struct xflow_status_entry *) pptrs->f_status_g;
+            pm_class_t class_id = 0;
 
-	    if (entry) pptrsv->vlan6.class = NF_evaluate_classifiers(entry->class, pptrsv->vlan6.f_data+tpl->tpl[NF9_APPLICATION_ID].off);
+            memcpy(&class_id, pkt+tpl->tpl[NF9_APPLICATION_ID].off, 4);
+	    if (entry) pptrsv->vlan6.class = NF_evaluate_classifiers(entry->class, &class_id, gentry);
 	  }
 	  if (config.nfacctd_isis) isis_srcdst_lookup(&pptrsv->vlan6);
 	  if (config.nfacctd_bgp_to_agent_map) BTA_find_id((struct id_table *)pptrs->bta_table, &pptrsv->vlan6, &pptrsv->vlan6.bta, &pptrsv->vlan6.bta2);
@@ -1494,6 +1549,7 @@ void process_v9_packet(unsigned char *pkt, u_int16_t len, struct packet_ptrs_vec
           pptrsv->mpls4.f_header = pptrs->f_header;
           pptrsv->mpls4.f_data = pptrs->f_data;
           pptrsv->mpls4.f_tpl = pptrs->f_tpl;
+	  pptrsv->mpls4.flow_type = pptrs->flow_type;
 
           if (req->bpf_filter) {
 	    u_char *ptr = pptrsv->mpls4.mpls_ptr;
@@ -1540,8 +1596,11 @@ void process_v9_packet(unsigned char *pkt, u_int16_t len, struct packet_ptrs_vec
 
 	  if (tpl->tpl[NF9_APPLICATION_ID].len == 4) {
 	    struct xflow_status_entry *entry = (struct xflow_status_entry *) pptrs->f_status;
+	    struct xflow_status_entry *gentry = (struct xflow_status_entry *) pptrs->f_status_g;
+            pm_class_t class_id = 0;
 
-	    if (entry) pptrsv->mpls4.class = NF_evaluate_classifiers(entry->class, pptrsv->mpls4.f_data+tpl->tpl[NF9_APPLICATION_ID].off);
+            memcpy(&class_id, pkt+tpl->tpl[NF9_APPLICATION_ID].off, 4);
+	    if (entry) pptrsv->mpls4.class = NF_evaluate_classifiers(entry->class, &class_id, gentry);
 	  }
 	  if (config.nfacctd_isis) isis_srcdst_lookup(&pptrsv->mpls4);
 	  if (config.nfacctd_bgp_to_agent_map) BTA_find_id((struct id_table *)pptrs->bta_table, &pptrsv->mpls4, &pptrsv->mpls4.bta, &pptrsv->mpls4.bta2);
@@ -1558,6 +1617,7 @@ void process_v9_packet(unsigned char *pkt, u_int16_t len, struct packet_ptrs_vec
 	  pptrsv->mpls6.f_header = pptrs->f_header;
 	  pptrsv->mpls6.f_data = pptrs->f_data;
 	  pptrsv->mpls6.f_tpl = pptrs->f_tpl;
+	  pptrsv->mpls6.flow_type = pptrs->flow_type;
 
 	  if (req->bpf_filter) {
 	    u_char *ptr = pptrsv->mpls6.mpls_ptr;
@@ -1603,8 +1663,11 @@ void process_v9_packet(unsigned char *pkt, u_int16_t len, struct packet_ptrs_vec
 
 	  if (tpl->tpl[NF9_APPLICATION_ID].len == 4) {
 	    struct xflow_status_entry *entry = (struct xflow_status_entry *) pptrs->f_status;
+	    struct xflow_status_entry *gentry = (struct xflow_status_entry *) pptrs->f_status_g;
+            pm_class_t class_id = 0;
 
-	    if (entry) pptrsv->mpls6.class = NF_evaluate_classifiers(entry->class, pptrsv->mpls6.f_data+tpl->tpl[NF9_APPLICATION_ID].off);
+            memcpy(&class_id, pkt+tpl->tpl[NF9_APPLICATION_ID].off, 4);
+	    if (entry) pptrsv->mpls6.class = NF_evaluate_classifiers(entry->class, &class_id, gentry);
 	  }
 	  if (config.nfacctd_isis) isis_srcdst_lookup(&pptrsv->mpls6);
 	  if (config.nfacctd_bgp_to_agent_map) BTA_find_id((struct id_table *)pptrs->bta_table, &pptrsv->mpls6, &pptrsv->mpls6.bta, &pptrsv->mpls6.bta2);
@@ -1621,6 +1684,7 @@ void process_v9_packet(unsigned char *pkt, u_int16_t len, struct packet_ptrs_vec
 	  pptrsv->vlanmpls4.f_header = pptrs->f_header;
 	  pptrsv->vlanmpls4.f_data = pptrs->f_data;
 	  pptrsv->vlanmpls4.f_tpl = pptrs->f_tpl;
+	  pptrsv->vlanmpls4.flow_type = pptrs->flow_type;
 
           if (req->bpf_filter) {
             u_char *ptr = pptrsv->vlanmpls4.mpls_ptr;
@@ -1669,8 +1733,11 @@ void process_v9_packet(unsigned char *pkt, u_int16_t len, struct packet_ptrs_vec
 
 	  if (tpl->tpl[NF9_APPLICATION_ID].len == 4) {
 	    struct xflow_status_entry *entry = (struct xflow_status_entry *) pptrs->f_status;
+	    struct xflow_status_entry *gentry = (struct xflow_status_entry *) pptrs->f_status_g;
+            pm_class_t class_id = 0;
 
-	    if (entry) pptrsv->vlanmpls4.class = NF_evaluate_classifiers(entry->class, pptrsv->vlanmpls4.f_data+tpl->tpl[NF9_APPLICATION_ID].off);
+            memcpy(&class_id, pkt+tpl->tpl[NF9_APPLICATION_ID].off, 4);
+	    if (entry) pptrsv->vlanmpls4.class = NF_evaluate_classifiers(entry->class, &class_id, gentry);
 	  }
 	  if (config.nfacctd_isis) isis_srcdst_lookup(&pptrsv->vlanmpls4);
 	  if (config.nfacctd_bgp_to_agent_map) BTA_find_id((struct id_table *)pptrs->bta_table, &pptrsv->vlanmpls4, &pptrsv->vlanmpls4.bta, &pptrsv->vlanmpls4.bta2);
@@ -1687,6 +1754,7 @@ void process_v9_packet(unsigned char *pkt, u_int16_t len, struct packet_ptrs_vec
 	  pptrsv->vlanmpls6.f_header = pptrs->f_header;
 	  pptrsv->vlanmpls6.f_data = pptrs->f_data;
 	  pptrsv->vlanmpls6.f_tpl = pptrs->f_tpl;
+	  pptrsv->vlanmpls6.flow_type = pptrs->flow_type;
 
           if (req->bpf_filter) {
             u_char *ptr = pptrsv->vlanmpls6.mpls_ptr;
@@ -1734,8 +1802,11 @@ void process_v9_packet(unsigned char *pkt, u_int16_t len, struct packet_ptrs_vec
 
 	  if (tpl->tpl[NF9_APPLICATION_ID].len == 4) {
 	    struct xflow_status_entry *entry = (struct xflow_status_entry *) pptrs->f_status;
+	    struct xflow_status_entry *gentry = (struct xflow_status_entry *) pptrs->f_status_g;
+            pm_class_t class_id = 0;
 
-	    if (entry) pptrsv->vlanmpls6.class = NF_evaluate_classifiers(entry->class, pptrsv->vlanmpls6.f_data+tpl->tpl[NF9_APPLICATION_ID].off);
+            memcpy(&class_id, pkt+tpl->tpl[NF9_APPLICATION_ID].off, 4);
+	    if (entry) pptrsv->vlanmpls6.class = NF_evaluate_classifiers(entry->class, &class_id, gentry);
 	  }
 	  if (config.nfacctd_isis) isis_srcdst_lookup(&pptrsv->vlanmpls6);
 	  if (config.nfacctd_bgp_to_agent_map) BTA_find_id((struct id_table *)pptrs->bta_table, &pptrsv->vlanmpls6, &pptrsv->vlanmpls6.bta, &pptrsv->vlanmpls6.bta2);
@@ -1748,6 +1819,40 @@ void process_v9_packet(unsigned char *pkt, u_int16_t len, struct packet_ptrs_vec
 	  exec_plugins(&pptrsv->vlanmpls6);
 	  break;
 #endif
+	case NF9_FTYPE_NAT_EVENT:
+	  if (req->bpf_filter) {
+	    reset_mac(pptrs);
+	    reset_ip4(pptrs);
+
+	    if (direction == DIRECTION_IN) {
+              memcpy(pptrs->mac_ptr+ETH_ADDR_LEN, pkt+tpl->tpl[NF9_IN_SRC_MAC].off, tpl->tpl[NF9_IN_SRC_MAC].len);
+              memcpy(pptrs->mac_ptr, pkt+tpl->tpl[NF9_IN_DST_MAC].off, tpl->tpl[NF9_IN_DST_MAC].len);
+	    }
+	    else if (direction == DIRECTION_OUT) {
+              memcpy(pptrs->mac_ptr+ETH_ADDR_LEN, pkt+tpl->tpl[NF9_OUT_SRC_MAC].off, tpl->tpl[NF9_OUT_SRC_MAC].len);
+              memcpy(pptrs->mac_ptr, pkt+tpl->tpl[NF9_OUT_DST_MAC].off, tpl->tpl[NF9_OUT_DST_MAC].len);
+	    }
+	    ((struct my_iphdr *)pptrs->iph_ptr)->ip_vhl = 0x45;
+            memcpy(&((struct my_iphdr *)pptrs->iph_ptr)->ip_src, pkt+tpl->tpl[NF9_IPV4_SRC_ADDR].off, tpl->tpl[NF9_IPV4_SRC_ADDR].len);
+            memcpy(&((struct my_iphdr *)pptrs->iph_ptr)->ip_dst, pkt+tpl->tpl[NF9_IPV4_DST_ADDR].off, tpl->tpl[NF9_IPV4_DST_ADDR].len);
+            memcpy(&((struct my_iphdr *)pptrs->iph_ptr)->ip_p, pkt+tpl->tpl[NF9_L4_PROTOCOL].off, tpl->tpl[NF9_L4_PROTOCOL].len);
+            memcpy(&((struct my_iphdr *)pptrs->iph_ptr)->ip_tos, pkt+tpl->tpl[NF9_SRC_TOS].off, tpl->tpl[NF9_SRC_TOS].len);
+            memcpy(&((struct my_tlhdr *)pptrs->tlh_ptr)->src_port, pkt+tpl->tpl[NF9_L4_SRC_PORT].off, tpl->tpl[NF9_L4_SRC_PORT].len);
+            memcpy(&((struct my_tlhdr *)pptrs->tlh_ptr)->dst_port, pkt+tpl->tpl[NF9_L4_DST_PORT].off, tpl->tpl[NF9_L4_DST_PORT].len);
+            memcpy(&((struct my_tcphdr *)pptrs->tlh_ptr)->th_flags, pkt+tpl->tpl[NF9_TCP_FLAGS].off, tpl->tpl[NF9_TCP_FLAGS].len);
+	  }
+
+	  memcpy(&pptrs->lm_mask_src, pkt+tpl->tpl[NF9_SRC_MASK].off, tpl->tpl[NF9_SRC_MASK].len);
+	  memcpy(&pptrs->lm_mask_dst, pkt+tpl->tpl[NF9_DST_MASK].off, tpl->tpl[NF9_DST_MASK].len);
+	  pptrs->lm_method_src = NF_NET_KEEP;
+	  pptrs->lm_method_dst = NF_NET_KEEP;
+
+	  /* Let's copy some relevant field */
+	  pptrs->l4_proto = 0;
+	  memcpy(&pptrs->l4_proto, pkt+tpl->tpl[NF9_L4_PROTOCOL].off, tpl->tpl[NF9_L4_PROTOCOL].len);
+
+	  if (config.pre_tag_map) NF_find_id((struct id_table *)pptrs->idtable, pptrs, &pptrs->tag, &pptrs->tag2);
+          exec_plugins(pptrs);
 	default:
 	  break;
         }
@@ -1847,6 +1952,7 @@ void compute_once()
   PmsgSz = sizeof(struct pkt_msg);
   PextrasSz = sizeof(struct pkt_extras);
   PbgpSz = sizeof(struct pkt_bgp_primitives);
+  PnatSz = sizeof(struct pkt_nat_primitives);
   ChBufHdrSz = sizeof(struct ch_buf_hdr);
   CharPtrSz = sizeof(char *);
   NfHdrV1Sz = sizeof(struct struct_header_v1);
@@ -1856,6 +1962,7 @@ void compute_once()
   NfHdrV9Sz = sizeof(struct struct_header_v9);
   NfDataHdrV9Sz = sizeof(struct data_hdr_v9);
   NfTplHdrV9Sz = sizeof(struct template_hdr_v9);
+  NfTplFieldV9Sz = sizeof(struct template_field_v9);
   NfOptTplHdrV9Sz = sizeof(struct options_template_hdr_v9);
   NfDataV1Sz = sizeof(struct struct_export_v1);
   NfDataV5Sz = sizeof(struct struct_export_v5);
@@ -1888,6 +1995,9 @@ u_int16_t NF_evaluate_flow_type(struct template_cache_entry *tpl, struct packet_
   else if (*(pptrs->f_data+tpl->tpl[NF9_IP_PROTOCOL_VERSION].off) == 6) ret += NF9_FTYPE_IPV6;
   else if (tpl->tpl[NF9_IPV4_SRC_ADDR].len > 0);
   else if (tpl->tpl[NF9_IPV6_SRC_ADDR].len > 0) ret += NF9_FTYPE_IPV6;
+
+  /* NetFlow Event Logging (NEL): generic NAT event support */
+  if (tpl->tpl[NF9_NAT_EVENT].len) ret = NF9_FTYPE_NAT_EVENT;
 
   return ret;
 }
@@ -1944,9 +2054,9 @@ void notify_malf_packet(short int severity, char *ostr, struct sockaddr *sa)
 
 int NF_find_id(struct id_table *t, struct packet_ptrs *pptrs, pm_id_t *tag, pm_id_t *tag2)
 {
-  int x, j, stop;
+  int x, j;
   struct sockaddr *sa = (struct sockaddr *) pptrs->f_agent;
-  pm_id_t id;
+  pm_id_t id, stop, ret;
 
   if (!t) return 0;
 
@@ -1955,20 +2065,26 @@ int NF_find_id(struct id_table *t, struct packet_ptrs *pptrs, pm_id_t *tag, pm_i
      part (x+1..end)
   */
 
+  pretag_init_vars(pptrs);
   id = 0;
   if (tag) *tag = 0;
   if (tag2) *tag2 = 0;
+
   if (sa->sa_family == AF_INET) {
     for (x = 0; x < t->ipv4_num; x++) {
       if (t->e[x].agent_ip.a.address.ipv4.s_addr == ((struct sockaddr_in *)sa)->sin_addr.s_addr) {
 	t->e[x].last_matched = FALSE; 
-        for (j = 0, stop = 0; !stop; j++) stop = (*t->e[x].func[j])(pptrs, &id, &t->e[x]);
-        if (id) {
-	  if (stop == PRETAG_MAP_RCODE_ID) {
+        for (j = 0, stop = 0, ret = 0; ((!ret || ret > TRUE) && (*t->e[x].func[j])); j++) {
+	  ret = (*t->e[x].func[j])(pptrs, &id, &t->e[x]);
+	  if (ret > TRUE) stop |= ret;
+	  else stop = ret;
+	}
+        if (!stop || stop > TRUE) {
+	  if (stop & PRETAG_MAP_RCODE_ID) {
 	    if (t->e[x].stack.func) id = (*t->e[x].stack.func)(id, *tag);
 	    *tag = id;
 	  }
-	  else if (stop == PRETAG_MAP_RCODE_ID2) {
+	  else if (stop & PRETAG_MAP_RCODE_ID2) {
 	    if (t->e[x].stack.func) id = (*t->e[x].stack.func)(id, *tag2);
 	    *tag2 = id;
 	  }
@@ -1998,13 +2114,17 @@ int NF_find_id(struct id_table *t, struct packet_ptrs *pptrs, pm_id_t *tag, pm_i
   else if (sa->sa_family == AF_INET6) {
     for (x = (t->num-t->ipv6_num); x < t->num; x++) {
       if (!ip6_addr_cmp(&t->e[x].agent_ip.a.address.ipv6, &((struct sockaddr_in6 *)sa)->sin6_addr)) {
-        for (j = 0, stop = 0; !stop; j++) stop = (*t->e[x].func[j])(pptrs, &id, &t->e[x]);
-        if (id) {
-          if (stop == PRETAG_MAP_RCODE_ID) {
+        for (j = 0, stop = 0, ret = 0; ((!ret || ret > TRUE) && (*t->e[x].func[j])); j++) {
+	  ret = (*t->e[x].func[j])(pptrs, &id, &t->e[x]);
+	  if (ret > TRUE) stop |= ret;
+	  else stop = ret;
+	}
+        if (!stop || stop > TRUE) {
+          if (stop & PRETAG_MAP_RCODE_ID) {
             if (t->e[x].stack.func) id = (*t->e[x].stack.func)(id, *tag);
             *tag = id;
           }
-          else if (stop == PRETAG_MAP_RCODE_ID2) {
+          else if (stop & PRETAG_MAP_RCODE_ID2) {
             if (t->e[x].stack.func) id = (*t->e[x].stack.func)(id, *tag2);
             *tag2 = id;
           }
@@ -2045,7 +2165,7 @@ char *nfv578_check_status(struct packet_ptrs *pptrs)
   struct xflow_status_entry *entry = NULL;
   
   if (hash >= 0) {
-    entry = search_status_table(sa, aux1, hash, XFLOW_STATUS_TABLE_MAX_ENTRIES);
+    entry = search_status_table(sa, aux1, 0, hash, XFLOW_STATUS_TABLE_MAX_ENTRIES);
     if (entry) {
       update_status_table(entry, ntohl(hdr->flow_sequence));
       entry->inc = ntohs(hdr->count);
@@ -2055,21 +2175,42 @@ char *nfv578_check_status(struct packet_ptrs *pptrs)
   return (char *) entry;
 }
 
-char *nfv9_check_status(struct packet_ptrs *pptrs, u_int32_t sid, u_int32_t seq)
+char *nfv9_check_status(struct packet_ptrs *pptrs, u_int32_t sid, u_int32_t flags, u_int32_t seq, u_int8_t update)
 {
   struct sockaddr *sa = (struct sockaddr *) pptrs->f_agent;
   int hash = hash_status_table(sid, sa, XFLOW_STATUS_TABLE_SZ);
   struct xflow_status_entry *entry = NULL;
   
   if (hash >= 0) {
-    entry = search_status_table(sa, sid, hash, XFLOW_STATUS_TABLE_MAX_ENTRIES);
-    if (entry) {
+    entry = search_status_table(sa, sid, flags, hash, XFLOW_STATUS_TABLE_MAX_ENTRIES);
+    if (entry && update) {
       update_status_table(entry, seq);
       entry->inc = 1;
     }
   }
 
   return (char *) entry;
+}
+
+pm_class_t NF_evaluate_classifiers(struct xflow_status_entry_class *entry, pm_class_t *class_id, struct xflow_status_entry *gentry)
+{
+  struct xflow_status_entry_class *centry;
+
+  /* Try #1: let's see if we have a matching class for the given SourceId/ObservedDomainId */
+  centry = search_class_id_status_table(entry, *class_id);
+  if (centry) {
+    return centry->class_int_id;
+  }
+
+  /* Try #2: let's chance if we have a global option */
+  if (gentry) {
+    centry = search_class_id_status_table(gentry->class, *class_id);
+    if (centry) {
+      return centry->class_int_id;
+    }
+  }
+
+  return 0;
 }
 
 /* Dummy objects here - ugly to see but well portable */

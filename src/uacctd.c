@@ -1,6 +1,6 @@
 /*  
     pmacct (Promiscuous mode IP Accounting package)
-    pmacct is Copyright (C) 2003-2012 by Paolo Lucente
+    pmacct is Copyright (C) 2003-2013 by Paolo Lucente
 */
 
 /*
@@ -48,18 +48,18 @@ u_char dummy_tlhdr[16];
 /* Functions */
 void usage_daemon(char *prog_name)
 {
-  printf("%s\n", UACCTD_USAGE_HEADER);
+  printf("%s (%s)\n", UACCTD_USAGE_HEADER, PMACCT_BUILD);
   printf("Usage: %s [ -D | -d ] [ -g ULOG group ] [ -c primitive [ , ... ] ] [ -P plugin [ , ... ] ]\n", prog_name);
   printf("       %s [ -f config_file ]\n", prog_name);
   printf("       %s [ -h ]\n", prog_name);
   printf("\nGeneral options:\n");
   printf("  -h  \tShow this page\n");
   printf("  -f  \tLoad configuration from the specified file\n");
-  printf("  -c  \t[ src_mac | dst_mac | vlan | src_host | dst_host | src_net | dst_net | src_port | dst_port |\n\t proto | tos | src_as | dst_as | sum_mac | sum_host | sum_net | sum_as | sum_port | tag |\n\t tag2 | flows | class | tcpflags | in_iface | out_iface | src_mask | dst_mask | cos | etype | none ] \n\tAggregation string (DEFAULT: src_host)\n");
+  printf("  -c  \t[ src_mac | dst_mac | vlan | src_host | dst_host | src_net | dst_net | src_port | dst_port |\n\t proto | tos | src_as | dst_as | sum_mac | sum_host | sum_net | sum_as | sum_port | tag |\n\t tag2 | flows | class | tcpflags | in_iface | out_iface | src_mask | dst_mask | cos | etype |\n\t sampling_rate | src_host_country | dst_host_country | pkt_len_distrib | timestamp_start |\n\t none ]\n\tAggregation string (DEFAULT: src_host)\n");
   printf("  -D  \tDaemonize\n"); 
   printf("  -n  \tPath to a file containing Network definitions\n");
   printf("  -o  \tPath to a file containing Port definitions\n");
-  printf("  -P  \t[ memory | print | mysql | pgsql | sqlite3 | nfprobe | sfprobe ] \n\tActivate plugin\n"); 
+  printf("  -P  \t[ memory | print | mysql | pgsql | sqlite3 | mongodb | nfprobe | sfprobe ] \n\tActivate plugin\n"); 
   printf("  -d  \tEnable debug\n");
   printf("  -S  \t[ auth | mail | daemon | kern | user | local[0-7] ] \n\tLog to the specified syslog facility\n");
   printf("  -F  \tWrite Core Process PID into the specified file\n");
@@ -243,10 +243,6 @@ int main(int argc,char **argv, char **envp)
       strlcpy(cfg_cmdline[rows], "sql_refresh_time: ", SRVBUFLEN);
       strncat(cfg_cmdline[rows], optarg, CFG_LINE_LEN(cfg_cmdline[rows]));
       rows++;
-      cfg_cmdline[rows] = malloc(SRVBUFLEN);
-      strlcpy(cfg_cmdline[rows], "print_refresh_time: ", SRVBUFLEN);
-      strncat(cfg_cmdline[rows], optarg, CFG_LINE_LEN(cfg_cmdline[rows]));
-      rows++;
       break;
     case 'v':
       strlcpy(cfg_cmdline[rows], "sql_table_version: ", SRVBUFLEN);
@@ -304,8 +300,11 @@ int main(int argc,char **argv, char **envp)
   while (list) {
     list->cfg.acct_type = ACCT_PM;
     set_default_preferences(&list->cfg);
-    if (!strcmp(list->name, "default") && !strcmp(list->type.string, "core")) 
+    if (!strcmp(list->name, "default") && !strcmp(list->type.string, "core")) { 
       memcpy(&config, &list->cfg, sizeof(struct configuration)); 
+      config.name = list->name;
+      config.type = list->type.string;
+    }
     list = list->next;
   }
 
@@ -387,7 +386,9 @@ int main(int argc,char **argv, char **envp)
 
 	config.handle_fragments = TRUE;
 	list->cfg.nfprobe_what_to_count = list->cfg.what_to_count;
+	list->cfg.nfprobe_what_to_count_2 = list->cfg.what_to_count_2;
 	list->cfg.what_to_count = 0;
+	list->cfg.what_to_count_2 = 0;
 #if defined (HAVE_L2)
 	if (list->cfg.nfprobe_version == 9 || list->cfg.nfprobe_version == 10) {
 	  list->cfg.what_to_count |= COUNT_SRC_MAC;
@@ -441,6 +442,7 @@ int main(int argc,char **argv, char **envp)
 
 	if (psize < 128) psize = config.snaplen = 128; /* SFL_DEFAULT_HEADER_SIZE */
 	list->cfg.what_to_count = COUNT_PAYLOAD;
+	list->cfg.what_to_count_2 = 0;
 	if (list->cfg.classifiers_path) {
 	  list->cfg.what_to_count |= COUNT_CLASS;
 	  config.handle_fragments = TRUE;
@@ -476,6 +478,11 @@ int main(int argc,char **argv, char **envp)
 	list->cfg.data_type = PIPE_TYPE_PAYLOAD;
       }
       else {
+        if (list->cfg.what_to_count_2 & (COUNT_POST_NAT_SRC_HOST|COUNT_POST_NAT_DST_HOST|
+                        COUNT_POST_NAT_SRC_PORT|COUNT_POST_NAT_DST_PORT|COUNT_NAT_EVENT|
+                        COUNT_TIMESTAMP_START|COUNT_TIMESTAMP_END))
+          list->cfg.data_type |= PIPE_TYPE_NAT;
+
 	evaluate_sums(&list->cfg.what_to_count, list->name, list->type.string);
 	if (list->cfg.what_to_count & (COUNT_SRC_PORT|COUNT_DST_PORT|COUNT_SUM_PORT|COUNT_TCPFLAGS))
 	  config.handle_fragments = TRUE;
@@ -487,13 +494,17 @@ int main(int argc,char **argv, char **envp)
 	  config.handle_fragments = TRUE;
 	  config.handle_flows = TRUE;
 	}
-	if (!list->cfg.what_to_count) {
+	if (!list->cfg.what_to_count && !list->cfg.what_to_count_2) {
 	  Log(LOG_WARNING, "WARN ( %s/%s ): defaulting to SRC HOST aggregation.\n", list->name, list->type.string);
 	  list->cfg.what_to_count |= COUNT_SRC_HOST;
 	}
-	if ((list->cfg.what_to_count & (COUNT_SRC_AS|COUNT_DST_AS|COUNT_SUM_AS)) && !list->cfg.networks_file && list->cfg.nfacctd_as != NF_AS_BGP) { 
-	  Log(LOG_ERR, "ERROR ( %s/%s ): AS aggregation selected but NO 'networks_file' or 'uacctd_as' are specified. Exiting...\n\n", list->name, list->type.string);
-	  exit(1);
+	if (list->cfg.what_to_count & (COUNT_SRC_AS|COUNT_DST_AS|COUNT_SUM_AS)) {
+	  if (!list->cfg.networks_file && list->cfg.nfacctd_as != NF_AS_BGP) { 
+	    Log(LOG_ERR, "ERROR ( %s/%s ): AS aggregation selected but NO 'networks_file' or 'uacctd_as' are specified. Exiting...\n\n", list->name, list->type.string);
+	    exit(1);
+	  }
+          if (list->cfg.nfacctd_as & NF_AS_FALLBACK && list->cfg.networks_file)
+            list->cfg.nfacctd_as |= NF_AS_NEW;
 	}
         if (list->cfg.what_to_count & (COUNT_SRC_NET|COUNT_DST_NET|COUNT_SUM_NET|COUNT_SRC_NMASK|COUNT_DST_NMASK|COUNT_PEER_DST_IP)) {
           if (!list->cfg.nfacctd_net) {
@@ -513,6 +524,8 @@ int main(int argc,char **argv, char **envp)
               Log(LOG_ERR, "ERROR ( %s/%s ): network aggregation selected but none of 'bgp_daemon', 'isis_daemon', 'networks_file', 'networks_mask' is specified. Exiting ...\n\n", list->name, list->type.string);
               exit(1);
             }
+            if (list->cfg.nfacctd_net & NF_NET_FALLBACK && list->cfg.networks_file)
+              list->cfg.nfacctd_net |= NF_NET_NEW;
           }
         }
 	if (list->cfg.what_to_count & COUNT_CLASS && !list->cfg.classifiers_path) {
@@ -696,6 +709,12 @@ int main(int argc,char **argv, char **envp)
   if (config.nfacctd_bgp) {
     Log(LOG_ERR, "ERROR ( default/core ): 'bgp_daemon' is available only with threads (--enable-threads). Exiting.\n");
     exit(1);
+  }
+#endif
+
+#if defined WITH_GEOIP
+  if (config.geoip_ipv4_file || config.geoip_ipv6_file) {
+    req.bpf_filter = TRUE;
   }
 #endif
 

@@ -379,7 +379,7 @@ struct data_hdr_v9 {
 
 /* defines */
 #define DEFAULT_NFACCTD_PORT 2100
-#define NETFLOW_MSG_SIZE 1550
+#define NETFLOW_MSG_SIZE PKT_MSG_SIZE
 #define V1_MAXFLOWS 24  /* max records in V1 packet */
 #define V5_MAXFLOWS 30  /* max records in V5 packet */
 #define V7_MAXFLOWS 27  /* max records in V7 packet */
@@ -497,10 +497,14 @@ struct data_hdr_v9 {
 #define NF9_CUST_TAG			201
 #define NF9_CUST_TAG2			202
 /* ... */
-#define NF9_ETHERTYPE			256
+#define NF9_POST_NAT_IPV4_SRC_ADDR	225
+#define NF9_POST_NAT_IPV4_DST_ADDR	226
+#define NF9_POST_NAT_IPV4_SRC_PORT	227
+#define NF9_POST_NAT_IPV4_DST_PORT	228
 /* ... */
-#define NF9_XLATE_IPV6_SRC_ADDR         281
-#define NF9_XLATE_IPV6_DST_ADDR         282
+#define NF9_NAT_EVENT			230
+/* ... */
+#define NF9_ETHERTYPE			256
 /* ... */
 #define NF9_OBSERVATION_TIME_SEC	322
 #define NF9_OBSERVATION_TIME_MSEC	323
@@ -509,18 +513,6 @@ struct data_hdr_v9 {
 #define NF9_ASA_XLATE_IPV4_DST_ADDR	40002
 #define NF9_ASA_XLATE_L4_SRC_PORT	40003
 #define NF9_ASA_XLATE_L4_DST_PORT	40004
-
-#define NF9_FTYPE_IPV4			0
-#define NF9_FTYPE_IPV6			1
-#define NF9_FTYPE_VLAN			5
-#define NF9_FTYPE_VLAN_IPV4		5
-#define NF9_FTYPE_VLAN_IPV6		6
-#define NF9_FTYPE_MPLS			10
-#define NF9_FTYPE_MPLS_IPV4		10
-#define NF9_FTYPE_MPLS_IPV6		11
-#define NF9_FTYPE_VLAN_MPLS		15	
-#define NF9_FTYPE_VLAN_MPLS_IPV4	15
-#define NF9_FTYPE_VLAN_MPLS_IPV6	16
 
 /* Sampling */
 #define NF9_SAMPLING_INTERVAL		34
@@ -715,6 +707,7 @@ EXT void process_v9_packet(unsigned char *, u_int16_t, struct packet_ptrs_vector
 EXT void process_raw_packet(unsigned char *, u_int16_t, struct packet_ptrs_vector *, struct plugin_requests *);
 EXT u_int16_t NF_evaluate_flow_type(struct template_cache_entry *, struct packet_ptrs *);
 EXT u_int16_t NF_evaluate_direction(struct template_cache_entry *, struct packet_ptrs *);
+EXT pm_class_t NF_evaluate_classifiers(struct xflow_status_entry_class *, pm_class_t *, struct xflow_status_entry *);
 EXT void reset_mac(struct packet_ptrs *);
 EXT void reset_mac_vlan(struct packet_ptrs *);
 EXT void reset_ip4(struct packet_ptrs *);
@@ -723,7 +716,7 @@ EXT void notify_malf_packet(short int, char *, struct sockaddr *);
 EXT int NF_find_id(struct id_table *, struct packet_ptrs *, pm_id_t *, pm_id_t *);
 
 EXT char *nfv578_check_status(struct packet_ptrs *);
-EXT char *nfv9_check_status(struct packet_ptrs *, u_int32_t, u_int32_t);
+EXT char *nfv9_check_status(struct packet_ptrs *, u_int32_t, u_int32_t, u_int32_t, u_int8_t);
 
 EXT struct template_cache tpl_cache;
 EXT struct v8_handler_entry v8_handlers[15];
@@ -734,16 +727,16 @@ EXT struct v8_handler_entry v8_handlers[15];
 #else
 #define EXT
 #endif
-EXT void handle_template(struct template_hdr_v9 *, struct packet_ptrs *, u_int16_t, u_int32_t, u_int16_t *);
+EXT struct template_cache_entry *handle_template(struct template_hdr_v9 *, struct packet_ptrs *, u_int16_t, u_int32_t, u_int16_t *, u_int16_t);
 EXT struct template_cache_entry *find_template(u_int16_t, struct packet_ptrs *, u_int16_t, u_int32_t);
-EXT struct template_cache_entry *insert_template(struct template_hdr_v9 *, struct packet_ptrs *, u_int16_t, u_int32_t, u_int16_t *, u_int8_t);
-EXT void refresh_template(struct template_hdr_v9 *, struct template_cache_entry *, struct packet_ptrs *, u_int16_t, u_int32_t, u_int16_t *, u_int8_t);
+EXT struct template_cache_entry *insert_template(struct template_hdr_v9 *, struct packet_ptrs *, u_int16_t, u_int32_t, u_int16_t *, u_int8_t, u_int16_t);
+EXT struct template_cache_entry *refresh_template(struct template_hdr_v9 *, struct template_cache_entry *, struct packet_ptrs *, u_int16_t, u_int32_t, u_int16_t *, u_int8_t, u_int16_t);
 EXT void log_template_header(struct template_cache_entry *, struct packet_ptrs *, u_int16_t, u_int32_t, u_int8_t);
 EXT void log_opt_template_field(u_int16_t, u_int16_t, u_int16_t, u_int8_t);
 EXT void log_template_field(u_int8_t, u_int32_t *, u_int16_t, u_int16_t, u_int16_t, u_int8_t);
 EXT void log_template_footer(u_int16_t, u_int8_t);
-EXT struct template_cache_entry *insert_opt_template(void *, struct packet_ptrs *, u_int16_t, u_int32_t, u_int8_t);
-EXT void refresh_opt_template(void *, struct template_cache_entry *, struct packet_ptrs *, u_int16_t, u_int32_t, u_int8_t);
+EXT struct template_cache_entry *insert_opt_template(void *, struct packet_ptrs *, u_int16_t, u_int32_t, u_int8_t, u_int16_t);
+EXT struct template_cache_entry *refresh_opt_template(void *, struct template_cache_entry *, struct packet_ptrs *, u_int16_t, u_int32_t, u_int8_t, u_int16_t);
 
 EXT void resolve_vlen_template(char *, struct template_cache_entry *);
 EXT u_int8_t get_ipfix_vlen(char *, u_int16_t *);

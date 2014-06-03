@@ -1,6 +1,6 @@
 /*
     pmacct (Promiscuous mode IP Accounting package)
-    pmacct is Copyright (C) 2003-2012 by Paolo Lucente
+    pmacct is Copyright (C) 2003-2013 by Paolo Lucente
 */
 
 /*
@@ -79,18 +79,22 @@ EXT int cfg_key_sql_aggressive_classification(char *, char *, char *);
 EXT int cfg_key_sql_locking_style(char *, char *, char *);
 EXT int cfg_key_sql_use_copy(char *, char *, char *);
 EXT int cfg_key_sql_delimiter(char *, char *, char *);
+EXT int cfg_key_timestamps_secs(char *, char *, char *);
+EXT int cfg_key_mongo_insert_batch(char *, char *, char *);
 EXT int cfg_key_plugin_pipe_size(char *, char *, char *);
 EXT int cfg_key_plugin_pipe_backlog(char *, char *, char *);
 EXT int cfg_key_plugin_buffer_size(char *, char *, char *);
 EXT int cfg_key_networks_mask(char *, char *, char *);
 EXT int cfg_key_networks_file(char *, char *, char *);
+EXT int cfg_key_networks_file_filter(char *, char *, char *);
 EXT int cfg_key_networks_cache_entries(char *, char *, char *);
 EXT int cfg_key_ports_file(char *, char *, char *);
 EXT int cfg_key_refresh_maps(char *, char *, char *);
-EXT int cfg_key_print_refresh_time(char *, char *, char *);
 EXT int cfg_key_print_cache_entries(char *, char *, char *);
 EXT int cfg_key_print_markers(char *, char *, char *);
 EXT int cfg_key_print_output(char *, char *, char *);
+EXT int cfg_key_print_output_file(char *, char *, char *);
+EXT int cfg_key_print_output_separator(char *, char *, char *);
 EXT int cfg_key_nfacctd_port(char *, char *, char *);
 EXT int cfg_key_nfacctd_ip(char *, char *, char *);
 EXT int cfg_key_nfacctd_allow_file(char *, char *, char *);
@@ -100,7 +104,6 @@ EXT int cfg_key_nfacctd_as_new(char *, char *, char *);
 EXT int cfg_key_nfacctd_net(char *, char *, char *);
 EXT int cfg_key_nfacctd_disable_checks(char *, char *, char *);
 EXT int cfg_key_nfacctd_mcast_groups(char *, char *, char *);
-EXT int cfg_key_nfacctd_sql_log(char *, char *, char *);
 EXT int cfg_key_pmacctd_force_frag_handling(char *, char *, char *);
 EXT int cfg_key_pmacctd_frag_buffer_size(char *, char *, char *);
 EXT int cfg_key_pmacctd_flow_buffer_size(char *, char *, char *);
@@ -135,7 +138,10 @@ EXT int cfg_key_sfprobe_receiver(char *, char *, char *);
 EXT int cfg_key_sfprobe_agentip(char *, char *, char *);
 EXT int cfg_key_sfprobe_agentsubid(char *, char *, char *);
 EXT int cfg_key_sfprobe_ifspeed(char *, char *, char *);
+EXT int cfg_key_tee_receivers(char *, char *, char *);
 EXT int cfg_key_tee_transparent(char *, char *, char *);
+EXT int cfg_key_tee_max_receivers(char *, char *, char *);
+EXT int cfg_key_tee_max_receiver_pools(char *, char *, char *);
 EXT int cfg_key_nfacctd_bgp(char *, char *, char *);
 EXT int cfg_key_nfacctd_bgp_msglog(char *, char *, char *);
 EXT int cfg_key_nfacctd_bgp_max_peers(char *, char *, char *);
@@ -170,11 +176,15 @@ EXT int cfg_key_nfacctd_isis_net(char *, char *, char *);
 EXT int cfg_key_nfacctd_isis_iface(char *, char *, char *);
 EXT int cfg_key_nfacctd_isis_mtu(char *, char *, char *);
 EXT int cfg_key_nfacctd_isis_msglog(char *, char *, char *);
+EXT int cfg_key_igp_daemon_map(char *, char *, char *);
+EXT int cfg_key_igp_daemon_map_msglog(char *, char *, char *);
+EXT int cfg_key_geoip_ipv4_file(char *, char *, char *);
+EXT int cfg_key_geoip_ipv6_file(char *, char *, char *);
 EXT int cfg_key_uacctd_group(char *, char *, char *);
 EXT int cfg_key_uacctd_nl_size(char *, char *, char *);
 EXT int cfg_key_tunnel_0(char *, char *, char *);
-EXT int cfg_key_xlate_src(char *, char *, char *);
-EXT int cfg_key_xlate_dst(char *, char *, char *);
+EXT int cfg_key_pkt_len_distrib_bins(char *, char *, char *);
 
 EXT void parse_time(char *, char *, int *, int *);
+EXT void cfg_set_aggregate(char *, u_int64_t [], u_int64_t, char *);
 #undef EXT

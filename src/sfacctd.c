@@ -1,6 +1,6 @@
 /*  
     pmacct (Promiscuous mode IP Accounting package)
-    pmacct is Copyright (C) 2003-2012 by Paolo Lucente
+    pmacct is Copyright (C) 2003-2013 by Paolo Lucente
 */
 
 /*
@@ -52,7 +52,7 @@ pid_t failed_plugins[MAX_N_PLUGINS]; /* plugins failed during startup phase */
 /* Functions */
 void usage_daemon(char *prog_name)
 {
-  printf("%s\n", SFACCTD_USAGE_HEADER);
+  printf("%s (%s)\n", SFACCTD_USAGE_HEADER, PMACCT_BUILD);
   printf("Usage: %s [ -D | -d ] [ -L IP address ] [ -l port ] [ -c primitive [ , ... ] ] [ -P plugin [ , ... ] ]\n", prog_name);
   printf("       %s [ -f config_file ]\n", prog_name);
   printf("       %s [ -h ]\n", prog_name);
@@ -61,11 +61,11 @@ void usage_daemon(char *prog_name)
   printf("  -L  \tBind to the specified IP address\n");
   printf("  -l  \tListen on the specified UDP port\n");
   printf("  -f  \tLoad configuration from the specified file\n");
-  printf("  -c  \t[ src_mac | dst_mac | vlan | src_host | dst_host | src_net | dst_net | src_port | dst_port |\n\t tos | proto | src_as | dst_as | sum_mac | sum_host | sum_net | sum_as | sum_port | tag |\n\t tag2 | flows | class | tcpflags | in_iface | out_iface | src_mask | dst_mask | cos | etype | none ] \n\tAggregation string (DEFAULT: src_host)\n");
+  printf("  -c  \t[ src_mac | dst_mac | vlan | src_host | dst_host | src_net | dst_net | src_port | dst_port |\n\t tos | proto | src_as | dst_as | sum_mac | sum_host | sum_net | sum_as | sum_port | tag |\n\t tag2 | flows | class | tcpflags | in_iface | out_iface | src_mask | dst_mask | cos | etype |\n\t sampling_rate | src_host_country | dst_host_country | pkt_len_distrib | timestamp_start |\n\t none ]\n\tAggregation string (DEFAULT: src_host)\n");
   printf("  -D  \tDaemonize\n"); 
   printf("  -n  \tPath to a file containing Network definitions\n");
   printf("  -o  \tPath to a file containing Port definitions\n");
-  printf("  -P  \t[ memory | print | mysql | pgsql | sqlite3 | tee ] \n\tActivate plugin\n"); 
+  printf("  -P  \t[ memory | print | mysql | pgsql | sqlite3 | mongodb | tee ] \n\tActivate plugin\n"); 
   printf("  -d  \tEnable debug\n");
   printf("  -S  \t[ auth | mail | daemon | kern | user | local[0-7] ] \n\ttLog to the specified syslog facility\n");
   printf("  -F  \tWrite Core Process PID into the specified file\n");
@@ -273,10 +273,6 @@ int main(int argc,char **argv, char **envp)
       strlcpy(cfg_cmdline[rows], "sql_refresh_time: ", SRVBUFLEN);
       strncat(cfg_cmdline[rows], optarg, CFG_LINE_LEN(cfg_cmdline[rows]));
       rows++;
-      cfg_cmdline[rows] = malloc(SRVBUFLEN);
-      strlcpy(cfg_cmdline[rows], "print_refresh_time: ", SRVBUFLEN);
-      strncat(cfg_cmdline[rows], optarg, CFG_LINE_LEN(cfg_cmdline[rows]));
-      rows++;
       break;
     case 'v':
       strlcpy(cfg_cmdline[rows], "sql_table_version: ", SRVBUFLEN);
@@ -324,8 +320,11 @@ int main(int argc,char **argv, char **envp)
   while(list) {
     list->cfg.acct_type = ACCT_SF;
     set_default_preferences(&list->cfg);
-    if (!strcmp(list->name, "default") && !strcmp(list->type.string, "core")) 
+    if (!strcmp(list->name, "default") && !strcmp(list->type.string, "core")) { 
       memcpy(&config, &list->cfg, sizeof(struct configuration)); 
+      config.name = list->name;
+      config.type = list->type.string;
+    }
     list = list->next;
   }
 
@@ -385,18 +384,28 @@ int main(int argc,char **argv, char **envp)
       }
       else {
 	list->cfg.data_type = PIPE_TYPE_METADATA;
+
+        if (list->cfg.what_to_count_2 & (COUNT_POST_NAT_SRC_HOST|COUNT_POST_NAT_DST_HOST|
+                        COUNT_POST_NAT_SRC_PORT|COUNT_POST_NAT_DST_PORT|COUNT_NAT_EVENT|
+                        COUNT_TIMESTAMP_START|COUNT_TIMESTAMP_END))
+          list->cfg.data_type |= PIPE_TYPE_NAT;
+
 	evaluate_sums(&list->cfg.what_to_count, list->name, list->type.string);
-	if (!list->cfg.what_to_count) {
+	if (!list->cfg.what_to_count && !list->cfg.what_to_count_2) {
 	  Log(LOG_WARNING, "WARN ( %s/%s ): defaulting to SRC HOST aggregation.\n", list->name, list->type.string);
 	  list->cfg.what_to_count |= COUNT_SRC_HOST;
 	}
-	if ((list->cfg.what_to_count & (COUNT_SRC_AS|COUNT_DST_AS|COUNT_SUM_AS)) && !list->cfg.networks_file && list->cfg.nfacctd_as & NF_AS_NEW) {
-	  Log(LOG_ERR, "ERROR ( %s/%s ): AS aggregation was selected but NO 'networks_file' specified. Exiting...\n\n", list->name, list->type.string);
-	  exit(1);
-	}
-        if ((list->cfg.what_to_count & (COUNT_SRC_AS|COUNT_DST_AS|COUNT_SUM_AS)) && !list->cfg.nfacctd_bgp && list->cfg.nfacctd_as == NF_AS_BGP) {
-          Log(LOG_ERR, "ERROR ( %s/%s ): AS aggregation selected but 'bgp_daemon' is not enabled. Exiting...\n\n", list->name, list->type.string);
-          exit(1);
+	if (list->cfg.what_to_count & (COUNT_SRC_AS|COUNT_DST_AS|COUNT_SUM_AS)) {
+	  if (!list->cfg.networks_file && list->cfg.nfacctd_as & NF_AS_NEW) {
+	    Log(LOG_ERR, "ERROR ( %s/%s ): AS aggregation was selected but NO 'networks_file' specified. Exiting...\n\n", list->name, list->type.string);
+	    exit(1);
+	  }
+          if (!list->cfg.nfacctd_bgp && list->cfg.nfacctd_as == NF_AS_BGP) {
+            Log(LOG_ERR, "ERROR ( %s/%s ): AS aggregation selected but 'bgp_daemon' is not enabled. Exiting...\n\n", list->name, list->type.string);
+            exit(1);
+	  }
+          if (list->cfg.nfacctd_as & NF_AS_FALLBACK && list->cfg.networks_file)
+            list->cfg.nfacctd_as |= NF_AS_NEW;
         }
         if (list->cfg.what_to_count & (COUNT_SRC_NET|COUNT_DST_NET|COUNT_SUM_NET|COUNT_SRC_NMASK|COUNT_DST_NMASK|COUNT_PEER_DST_IP)) {
           if (!list->cfg.nfacctd_net) {
@@ -412,6 +421,8 @@ int main(int argc,char **argv, char **envp)
               Log(LOG_ERR, "ERROR ( %s/%s ): network aggregation selected but none of 'bgp_daemon', 'isis_daemon', 'networks_file', 'networks_mask' is specified. Exiting ...\n\n", list->name, list->type.string);
               exit(1);
             }
+            if (list->cfg.nfacctd_net & NF_NET_FALLBACK && list->cfg.networks_file)
+              list->cfg.nfacctd_net |= NF_NET_NEW;
           }
         }
 	if (list->cfg.what_to_count & COUNT_CLASS && !list->cfg.classifiers_path) {
@@ -479,8 +490,8 @@ int main(int argc,char **argv, char **envp)
   }
 
   /* bind socket to port */
-  rc = Setsocksize(config.sock, SOL_SOCKET, SO_REUSEADDR, (char *)&yes, sizeof(yes));
-  if (rc < 0) Log(LOG_ERR, "WARN ( default/core ): Setsocksize() failed for SO_REUSEADDR.\n");
+  rc = setsockopt(config.sock, SOL_SOCKET, SO_REUSEADDR, (char *)&yes, sizeof(yes));
+  if (rc < 0) Log(LOG_ERR, "WARN ( default/core ): setsockopt() failed for SO_REUSEADDR.\n");
 
   if (config.pipe_size) {
     rc = Setsocksize(config.sock, SOL_SOCKET, SO_RCVBUF, &config.pipe_size, sizeof(config.pipe_size));
@@ -602,6 +613,12 @@ int main(int argc,char **argv, char **envp)
   if (config.nfacctd_bgp) {
     Log(LOG_ERR, "ERROR ( default/core ): 'bgp_daemon' is available only with threads (--enable-threads). Exiting.\n");
     exit(1);
+  }
+#endif
+
+#if defined WITH_GEOIP
+  if (config.geoip_ipv4_file || config.geoip_ipv6_file) {
+    req.bpf_filter = TRUE;
   }
 #endif
 
@@ -1019,6 +1036,7 @@ void compute_once()
   PmsgSz = sizeof(struct pkt_msg);
   PextrasSz = sizeof(struct pkt_extras);
   PbgpSz = sizeof(struct pkt_bgp_primitives);
+  PnatSz = sizeof(struct pkt_nat_primitives);
   ChBufHdrSz = sizeof(struct ch_buf_hdr);
   CharPtrSz = sizeof(char *);
   IP4HdrSz = sizeof(struct my_iphdr);
@@ -1885,8 +1903,13 @@ void readFlowSample_ethernet(SFSample *sample)
 
   if (sample->eth_type == ETHERTYPE_IP) sample->gotIPV4 = TRUE;
 #if defined ENABLE_IPV6
-  if (sample->eth_type == ETHERTYPE_IPV6) sample->gotIPV6 = TRUE;
+  else if (sample->eth_type == ETHERTYPE_IPV6) sample->gotIPV6 = TRUE;
 #endif
+
+  /* Commit eth_len to packet length: will be overwritten if we get
+     SFLFLOW_IPV4 or SFLFLOW_IPV6; otherwise will get along as the
+     best information we have */ 
+  if (!sample->sampledPacketSize) sample->sampledPacketSize = sample->eth_len;
 }
 
 
@@ -2141,7 +2164,6 @@ void finalizeSample(SFSample *sample, struct packet_ptrs_vector *pptrsv, struct 
   u_int8_t dcd_ipProtocol = sample->dcd_ipProtocol, dcd_ipTos = sample->dcd_ipTos;
   u_int8_t dcd_tcpFlags = sample->dcd_tcpFlags;
   u_int16_t vlan = htons(sample->in_vlan);
-  u_int16_t flow_type;
 
   /* check for out_vlan */
   if (!vlan && sample->out_vlan) vlan = htons(sample->out_vlan); 
@@ -2153,10 +2175,10 @@ void finalizeSample(SFSample *sample, struct packet_ptrs_vector *pptrsv, struct 
   */
   if (sample->gotIPV4 || sample->gotIPV6 || !sample->eth_type) {
     reset_net_status_v(pptrsv);
-    flow_type = SF_evaluate_flow_type(pptrs);
+    pptrs->flow_type = SF_evaluate_flow_type(pptrs);
 
     /* we need to understand the IP protocol version in order to build the fake packet */
-    switch (flow_type) {
+    switch (pptrs->flow_type) {
     case NF9_FTYPE_IPV4:
       if (req->bpf_filter) {
         reset_mac(pptrs);
@@ -2193,6 +2215,8 @@ void finalizeSample(SFSample *sample, struct packet_ptrs_vector *pptrsv, struct 
       break;
 #if defined ENABLE_IPV6
     case NF9_FTYPE_IPV6:
+      pptrsv->v6.flow_type = pptrs->flow_type;
+
       if (req->bpf_filter) {
         reset_mac(&pptrsv->v6);
         reset_ip6(&pptrsv->v6);
@@ -2228,6 +2252,8 @@ void finalizeSample(SFSample *sample, struct packet_ptrs_vector *pptrsv, struct 
       break;
 #endif
     case NF9_FTYPE_VLAN_IPV4:
+      pptrsv->vlan4.flow_type = pptrs->flow_type;
+
       if (req->bpf_filter) {
         reset_mac_vlan(&pptrsv->vlan4);
         reset_ip4(&pptrsv->vlan4);
@@ -2264,6 +2290,8 @@ void finalizeSample(SFSample *sample, struct packet_ptrs_vector *pptrsv, struct 
       break;
 #if defined ENABLE_IPV6
     case NF9_FTYPE_VLAN_IPV6:
+      pptrsv->vlan6.flow_type = pptrs->flow_type;
+
       if (req->bpf_filter) {
         reset_mac_vlan(&pptrsv->vlan6);
         reset_ip6(&pptrsv->vlan6);
@@ -2300,6 +2328,8 @@ void finalizeSample(SFSample *sample, struct packet_ptrs_vector *pptrsv, struct 
       break;
 #endif
     case NF9_FTYPE_MPLS_IPV4:
+      pptrsv->mpls4.flow_type = pptrs->flow_type;
+
       if (req->bpf_filter) {
         u_char *ptr = pptrsv->mpls4.mpls_ptr;
         u_int32_t label, idx;
@@ -2349,6 +2379,8 @@ void finalizeSample(SFSample *sample, struct packet_ptrs_vector *pptrsv, struct 
       break;
 #if defined ENABLE_IPV6
     case NF9_FTYPE_MPLS_IPV6:
+      pptrsv->mpls6.flow_type = pptrs->flow_type;
+
       if (req->bpf_filter) {
         u_char *ptr = pptrsv->mpls6.mpls_ptr;
         u_int32_t label, idx;
@@ -2397,6 +2429,8 @@ void finalizeSample(SFSample *sample, struct packet_ptrs_vector *pptrsv, struct 
       break;
 #endif
     case NF9_FTYPE_VLAN_MPLS_IPV4:
+      pptrsv->vlanmpls4.flow_type = pptrs->flow_type;
+
       if (req->bpf_filter) {
         u_char *ptr = pptrsv->vlanmpls4.mpls_ptr;
         u_int32_t label, idx;
@@ -2446,6 +2480,8 @@ void finalizeSample(SFSample *sample, struct packet_ptrs_vector *pptrsv, struct 
       break;
 #if defined ENABLE_IPV6
     case NF9_FTYPE_VLAN_MPLS_IPV6:
+      pptrsv->vlanmpls6.flow_type = pptrs->flow_type;
+
       if (req->bpf_filter) {
         u_char *ptr = pptrsv->vlanmpls6.mpls_ptr;
         u_int32_t label, idx;
@@ -2503,8 +2539,8 @@ void finalizeSample(SFSample *sample, struct packet_ptrs_vector *pptrsv, struct 
 int SF_find_id(struct id_table *t, struct packet_ptrs *pptrs, pm_id_t *tag, pm_id_t *tag2)
 {
   SFSample *sample = (SFSample *)pptrs->f_data; 
-  int x, j, stop;
-  pm_id_t id;
+  int x, j;
+  pm_id_t id, stop, ret;
 
   if (!t) return 0;
 
@@ -2513,20 +2549,26 @@ int SF_find_id(struct id_table *t, struct packet_ptrs *pptrs, pm_id_t *tag, pm_i
      part (x+1..end)
   */
 
+  pretag_init_vars(pptrs);
   id = 0;
   if (tag) *tag = 0;
   if (tag2) *tag2 = 0;
+
   if (sample->agent_addr.type == SFLADDRESSTYPE_IP_V4) {
     for (x = 0; x < t->ipv4_num; x++) {
       if (t->e[x].agent_ip.a.address.ipv4.s_addr == sample->agent_addr.address.ip_v4.s_addr) {
 	t->e[x].last_matched = FALSE;
-        for (j = 0, stop = 0; !stop; j++) stop = (*t->e[x].func[j])(pptrs, &id, &t->e[x]);
-        if (id) {
-          if (stop == PRETAG_MAP_RCODE_ID) {
+        for (j = 0, stop = 0, ret = 0; ((!ret || ret > TRUE) && (*t->e[x].func[j])); j++) {
+          ret = (*t->e[x].func[j])(pptrs, &id, &t->e[x]);
+          if (ret > TRUE) stop |= ret;
+          else stop = ret;
+        }
+        if (!stop || stop > TRUE) {
+          if (stop & PRETAG_MAP_RCODE_ID) {
             if (t->e[x].stack.func) id = (*t->e[x].stack.func)(id, *tag);
             *tag = id;
           }
-          else if (stop == PRETAG_MAP_RCODE_ID2) {
+          else if (stop & PRETAG_MAP_RCODE_ID2) {
             if (t->e[x].stack.func) id = (*t->e[x].stack.func)(id, *tag2);
             *tag2 = id;
           }
@@ -2556,13 +2598,17 @@ int SF_find_id(struct id_table *t, struct packet_ptrs *pptrs, pm_id_t *tag, pm_i
   else if (sample->agent_addr.type == SFLADDRESSTYPE_IP_V6) { 
     for (x = (t->num-t->ipv6_num); x < t->num; x++) {
       if (!ip6_addr_cmp(&t->e[x].agent_ip.a.address.ipv6, &sample->agent_addr.address.ip_v6)) {
-        for (j = 0, stop = 0; !stop; j++) stop = (*t->e[x].func[j])(pptrs, &id, &t->e[x]);
-        if (id) {
-          if (stop == PRETAG_MAP_RCODE_ID) {
+        for (j = 0, stop = 0, ret = 0; ((!ret || ret > TRUE) && (*t->e[x].func[j])); j++) {
+          ret = (*t->e[x].func[j])(pptrs, &id, &t->e[x]);
+          if (ret > TRUE) stop |= ret;
+          else stop = ret;
+        }
+        if (!stop || stop > TRUE) {
+          if (stop & PRETAG_MAP_RCODE_ID) {
             if (t->e[x].stack.func) id = (*t->e[x].stack.func)(id, *tag);
             *tag = id;
           }
-          else if (stop == PRETAG_MAP_RCODE_ID2) {
+          else if (stop & PRETAG_MAP_RCODE_ID2) {
             if (t->e[x].stack.func) id = (*t->e[x].stack.func)(id, *tag2);
             *tag2 = id;
           }
@@ -2579,6 +2625,7 @@ int SF_find_id(struct id_table *t, struct packet_ptrs *pptrs, pm_id_t *tag, pm_i
 	      *tag = 0;
 	      *tag2 = 0;
 	    }
+
             x = t->e[x].jeq.ptr->pos;
             x--; /* yes, it will be automagically incremented by the for() cycle */
             id = 0;
@@ -2672,7 +2719,7 @@ char *sfv245_check_status(SFSample *spp, struct sockaddr *sa)
   hash = hash_status_table(aux1, &salocal, XFLOW_STATUS_TABLE_SZ);
 
   if (hash >= 0) {
-    entry = search_status_table(&salocal, aux1, hash, XFLOW_STATUS_TABLE_MAX_ENTRIES);
+    entry = search_status_table(&salocal, aux1, 0, hash, XFLOW_STATUS_TABLE_MAX_ENTRIES);
     if (entry) {
       update_status_table(entry, spp->sequenceNo);
       entry->inc = 1;

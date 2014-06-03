@@ -1,6 +1,6 @@
 /*
     pmacct (Promiscuous mode IP Accounting package)
-    pmacct is Copyright (C) 2003-2012 by Paolo Lucente
+    pmacct is Copyright (C) 2003-2013 by Paolo Lucente
 */
 
 /*
@@ -32,8 +32,10 @@ struct _dictionary_line {
 };
 
 struct configuration {
-  u_int64_t what_to_count;
+  u_int64_t what_to_count;	/* first registry */
+  u_int64_t what_to_count_2;	/* second registry */
   u_int64_t nfprobe_what_to_count;
+  u_int64_t nfprobe_what_to_count_2;
   char *name;
   char *type;
   int sock;
@@ -88,10 +90,12 @@ struct configuration {
   char *sql_locking_style;
   int sql_use_copy;
   char *sql_delimiter;
-  int print_refresh_time;
+  int timestamps_secs;
+  int mongo_insert_batch;
   int print_cache_entries;
   int print_markers;
   int print_output;
+  char *print_output_separator;
   char *print_output_file;
   int nfacctd_port;
   char *nfacctd_ip;
@@ -101,7 +105,6 @@ struct configuration {
   u_int32_t nfacctd_net;
   int sfacctd_renormalize;
   int nfacctd_disable_checks;
-  int nfacctd_sql_log;
   int nfacctd_bgp;
   int nfacctd_bgp_msglog;
   char *nfacctd_bgp_ip;
@@ -136,6 +139,16 @@ struct configuration {
   char *nfacctd_isis_iface;
   int nfacctd_isis_mtu;
   int nfacctd_isis_msglog;
+  char *igp_daemon_map;
+  char *igp_daemon_map_msglog;
+  char *geoip_ipv4_file;
+  char *geoip_ipv6_file;
+#if defined WITH_GEOIP
+  GeoIP *geoip_ipv4;
+#if defined ENABLE_IPV6
+  GeoIP *geoip_ipv6;
+#endif
+#endif
   int promisc; /* pcap_open_live() promisc parameter */
   char *clbuf; /* pcap filter */
   char *pcap_savefile;
@@ -152,6 +165,7 @@ struct configuration {
   char *pidfile; 
   int networks_mask;
   char *networks_file;
+  int networks_file_filter;
   int networks_cache_entries;
   char *ports_file;
   int refresh_maps;
@@ -191,11 +205,15 @@ struct configuration {
   int sfprobe_agentsubid;
   u_int64_t sfprobe_ifspeed;
   int tee_transparent;
+  int tee_max_receivers;
+  int tee_max_receiver_pools;
+  char *tee_receivers;
   int uacctd_group;
   int uacctd_nl_size;
   char *tunnel0;
-  int xlate_src;
-  int xlate_dst;
+  char *pkt_len_distrib_bins_str;
+  char *pkt_len_distrib_bins[MAX_PKT_LEN_DISTRIB_BINS];
+  u_int16_t pkt_len_distrib_bins_lookup[ETHER_JUMBO_MTU+1];
 };
 
 struct plugin_type_entry {

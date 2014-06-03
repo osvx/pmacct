@@ -1,6 +1,6 @@
 /*
     pmacct (Promiscuous mode IP Accounting package)
-    pmacct is Copyright (C) 2003-2012 by Paolo Lucente
+    pmacct is Copyright (C) 2003-2013 by Paolo Lucente
 */
 
 /*
@@ -122,68 +122,84 @@ int cfg_key_aggregate(char *filename, char *name, char *value_ptr)
 {
   struct plugins_list_entry *list = plugins_list;
   char *count_token;
-  u_int64_t value = 0;
+  u_int64_t value[3];
   u_int32_t changes = 0; 
 
   trim_all_spaces(value_ptr);
+  memset(&value, 0, sizeof(value));
 
   while (count_token = extract_token(&value_ptr, ',')) {
-    if (!strcmp(count_token, "src_host")) value |= COUNT_SRC_HOST;
-    else if (!strcmp(count_token, "dst_host")) value |= COUNT_DST_HOST;
-    else if (!strcmp(count_token, "src_net")) value |= COUNT_SRC_NET;
-    else if (!strcmp(count_token, "dst_net")) value |= COUNT_DST_NET;
-    else if (!strcmp(count_token, "sum")) value |= COUNT_SUM_HOST;
-    else if (!strcmp(count_token, "src_port")) value |= COUNT_SRC_PORT;
-    else if (!strcmp(count_token, "dst_port")) value |= COUNT_DST_PORT;
-    else if (!strcmp(count_token, "proto")) value |= COUNT_IP_PROTO;
+    if (!strcmp(count_token, "src_host")) cfg_set_aggregate(filename, value, COUNT_INT_SRC_HOST, count_token);
+    else if (!strcmp(count_token, "dst_host")) cfg_set_aggregate(filename, value, COUNT_INT_DST_HOST, count_token);
+    else if (!strcmp(count_token, "src_net")) cfg_set_aggregate(filename, value, COUNT_INT_SRC_NET, count_token);
+    else if (!strcmp(count_token, "dst_net")) cfg_set_aggregate(filename, value, COUNT_INT_DST_NET, count_token);
+    else if (!strcmp(count_token, "sum")) cfg_set_aggregate(filename, value, COUNT_INT_SUM_HOST, count_token);
+    else if (!strcmp(count_token, "src_port")) cfg_set_aggregate(filename, value, COUNT_INT_SRC_PORT, count_token);
+    else if (!strcmp(count_token, "dst_port")) cfg_set_aggregate(filename, value, COUNT_INT_DST_PORT, count_token);
+    else if (!strcmp(count_token, "proto")) cfg_set_aggregate(filename, value, COUNT_INT_IP_PROTO, count_token);
 #if defined (HAVE_L2)
-    else if (!strcmp(count_token, "src_mac")) value |= COUNT_SRC_MAC;
-    else if (!strcmp(count_token, "dst_mac")) value |= COUNT_DST_MAC;
-    else if (!strcmp(count_token, "vlan")) value |= COUNT_VLAN;
-    else if (!strcmp(count_token, "sum_mac")) value |= COUNT_SUM_MAC;
+    else if (!strcmp(count_token, "src_mac")) cfg_set_aggregate(filename, value, COUNT_INT_SRC_MAC, count_token);
+    else if (!strcmp(count_token, "dst_mac")) cfg_set_aggregate(filename, value, COUNT_INT_DST_MAC, count_token);
+    else if (!strcmp(count_token, "vlan")) cfg_set_aggregate(filename, value, COUNT_INT_VLAN, count_token);
+    else if (!strcmp(count_token, "sum_mac")) cfg_set_aggregate(filename, value, COUNT_INT_SUM_MAC, count_token);
 #endif
-    else if (!strcmp(count_token, "tos")) value |= COUNT_IP_TOS;
-    else if (!strcmp(count_token, "none")) value |= COUNT_NONE;
-    else if (!strcmp(count_token, "src_as")) value |= COUNT_SRC_AS;
-    else if (!strcmp(count_token, "dst_as")) value |= COUNT_DST_AS;
-    else if (!strcmp(count_token, "sum_host")) value |= COUNT_SUM_HOST;
-    else if (!strcmp(count_token, "sum_net")) value |= COUNT_SUM_NET;
-    else if (!strcmp(count_token, "sum_as")) value |= COUNT_SUM_AS;
-    else if (!strcmp(count_token, "sum_port")) value |= COUNT_SUM_PORT;
-    else if (!strcmp(count_token, "tag")) value |= COUNT_ID;
-    else if (!strcmp(count_token, "tag2")) value |= COUNT_ID2;
-    else if (!strcmp(count_token, "flows")) value |= COUNT_FLOWS;
-    else if (!strcmp(count_token, "class")) value |= COUNT_CLASS;
-    else if (!strcmp(count_token, "tcpflags")) value |= COUNT_TCPFLAGS;
-    else if (!strcmp(count_token, "std_comm")) value |= COUNT_STD_COMM;
-    else if (!strcmp(count_token, "ext_comm")) value |= COUNT_EXT_COMM;
-    else if (!strcmp(count_token, "as_path")) value |= COUNT_AS_PATH;
-    else if (!strcmp(count_token, "local_pref")) value |= COUNT_LOCAL_PREF;
-    else if (!strcmp(count_token, "med")) value |= COUNT_MED;
-    else if (!strcmp(count_token, "peer_src_as")) value |= COUNT_PEER_SRC_AS;
-    else if (!strcmp(count_token, "peer_dst_as")) value |= COUNT_PEER_DST_AS;
-    else if (!strcmp(count_token, "peer_src_ip")) value |= COUNT_PEER_SRC_IP;
-    else if (!strcmp(count_token, "peer_dst_ip")) value |= COUNT_PEER_DST_IP;
-    else if (!strcmp(count_token, "src_as_path")) value |= COUNT_SRC_AS_PATH;
-    else if (!strcmp(count_token, "src_std_comm")) value |= COUNT_SRC_STD_COMM;
-    else if (!strcmp(count_token, "src_ext_comm")) value |= COUNT_SRC_EXT_COMM;
-    else if (!strcmp(count_token, "src_local_pref")) value |= COUNT_SRC_LOCAL_PREF;
-    else if (!strcmp(count_token, "src_med")) value |= COUNT_SRC_MED;
-    else if (!strcmp(count_token, "in_iface")) value |= COUNT_IN_IFACE;
-    else if (!strcmp(count_token, "out_iface")) value |= COUNT_OUT_IFACE;
-    else if (!strcmp(count_token, "src_mask")) value |= COUNT_SRC_NMASK;
-    else if (!strcmp(count_token, "dst_mask")) value |= COUNT_DST_NMASK;
-    else if (!strcmp(count_token, "cos")) value |= COUNT_COS;
-    else if (!strcmp(count_token, "etype")) value |= COUNT_ETHERTYPE;
-    else if (!strcmp(count_token, "mpls_vpn_rd")) value |= COUNT_MPLS_VPN_RD;
+    else if (!strcmp(count_token, "tos")) cfg_set_aggregate(filename, value, COUNT_INT_IP_TOS, count_token);
+    else if (!strcmp(count_token, "none")) cfg_set_aggregate(filename, value, COUNT_INT_NONE, count_token);
+    else if (!strcmp(count_token, "src_as")) cfg_set_aggregate(filename, value, COUNT_INT_SRC_AS, count_token);
+    else if (!strcmp(count_token, "dst_as")) cfg_set_aggregate(filename, value, COUNT_INT_DST_AS, count_token);
+    else if (!strcmp(count_token, "sum_host")) cfg_set_aggregate(filename, value, COUNT_INT_SUM_HOST, count_token);
+    else if (!strcmp(count_token, "sum_net")) cfg_set_aggregate(filename, value, COUNT_INT_SUM_NET, count_token);
+    else if (!strcmp(count_token, "sum_as")) cfg_set_aggregate(filename, value, COUNT_INT_SUM_AS, count_token);
+    else if (!strcmp(count_token, "sum_port")) cfg_set_aggregate(filename, value, COUNT_INT_SUM_PORT, count_token);
+    else if (!strcmp(count_token, "tag")) cfg_set_aggregate(filename, value, COUNT_INT_ID, count_token);
+    else if (!strcmp(count_token, "tag2")) cfg_set_aggregate(filename, value, COUNT_INT_ID2, count_token);
+    else if (!strcmp(count_token, "flows")) cfg_set_aggregate(filename, value, COUNT_INT_FLOWS, count_token);
+    else if (!strcmp(count_token, "class")) cfg_set_aggregate(filename, value, COUNT_INT_CLASS, count_token);
+    else if (!strcmp(count_token, "tcpflags")) cfg_set_aggregate(filename, value, COUNT_INT_TCPFLAGS, count_token);
+    else if (!strcmp(count_token, "std_comm")) cfg_set_aggregate(filename, value, COUNT_INT_STD_COMM, count_token);
+    else if (!strcmp(count_token, "ext_comm")) cfg_set_aggregate(filename, value, COUNT_INT_EXT_COMM, count_token);
+    else if (!strcmp(count_token, "as_path")) cfg_set_aggregate(filename, value, COUNT_INT_AS_PATH, count_token);
+    else if (!strcmp(count_token, "local_pref")) cfg_set_aggregate(filename, value, COUNT_INT_LOCAL_PREF, count_token);
+    else if (!strcmp(count_token, "med")) cfg_set_aggregate(filename, value, COUNT_INT_MED, count_token);
+    else if (!strcmp(count_token, "peer_src_as")) cfg_set_aggregate(filename, value, COUNT_INT_PEER_SRC_AS, count_token);
+    else if (!strcmp(count_token, "peer_dst_as")) cfg_set_aggregate(filename, value, COUNT_INT_PEER_DST_AS, count_token);
+    else if (!strcmp(count_token, "peer_src_ip")) cfg_set_aggregate(filename, value, COUNT_INT_PEER_SRC_IP, count_token);
+    else if (!strcmp(count_token, "peer_dst_ip")) cfg_set_aggregate(filename, value, COUNT_INT_PEER_DST_IP, count_token);
+    else if (!strcmp(count_token, "src_as_path")) cfg_set_aggregate(filename, value, COUNT_INT_SRC_AS_PATH, count_token);
+    else if (!strcmp(count_token, "src_std_comm")) cfg_set_aggregate(filename, value, COUNT_INT_SRC_STD_COMM, count_token);
+    else if (!strcmp(count_token, "src_ext_comm")) cfg_set_aggregate(filename, value, COUNT_INT_SRC_EXT_COMM, count_token);
+    else if (!strcmp(count_token, "src_local_pref")) cfg_set_aggregate(filename, value, COUNT_INT_SRC_LOCAL_PREF, count_token);
+    else if (!strcmp(count_token, "src_med")) cfg_set_aggregate(filename, value, COUNT_INT_SRC_MED, count_token);
+    else if (!strcmp(count_token, "in_iface")) cfg_set_aggregate(filename, value, COUNT_INT_IN_IFACE, count_token);
+    else if (!strcmp(count_token, "out_iface")) cfg_set_aggregate(filename, value, COUNT_INT_OUT_IFACE, count_token);
+    else if (!strcmp(count_token, "src_mask")) cfg_set_aggregate(filename, value, COUNT_INT_SRC_NMASK, count_token);
+    else if (!strcmp(count_token, "dst_mask")) cfg_set_aggregate(filename, value, COUNT_INT_DST_NMASK, count_token);
+    else if (!strcmp(count_token, "cos")) cfg_set_aggregate(filename, value, COUNT_INT_COS, count_token);
+    else if (!strcmp(count_token, "etype")) cfg_set_aggregate(filename, value, COUNT_INT_ETHERTYPE, count_token);
+    else if (!strcmp(count_token, "mpls_vpn_rd")) cfg_set_aggregate(filename, value, COUNT_INT_MPLS_VPN_RD, count_token);
+    else if (!strcmp(count_token, "sampling_rate")) cfg_set_aggregate(filename, value, COUNT_INT_SAMPLING_RATE, count_token);
+    else if (!strcmp(count_token, "src_host_country")) cfg_set_aggregate(filename, value, COUNT_INT_SRC_HOST_COUNTRY, count_token);
+    else if (!strcmp(count_token, "dst_host_country")) cfg_set_aggregate(filename, value, COUNT_INT_DST_HOST_COUNTRY, count_token);
+    else if (!strcmp(count_token, "pkt_len_distrib")) cfg_set_aggregate(filename, value, COUNT_INT_PKT_LEN_DISTRIB, count_token);
+    else if (!strcmp(count_token, "post_nat_src_host")) cfg_set_aggregate(filename, value, COUNT_INT_POST_NAT_SRC_HOST, count_token);
+    else if (!strcmp(count_token, "post_nat_dst_host")) cfg_set_aggregate(filename, value, COUNT_INT_POST_NAT_DST_HOST, count_token);
+    else if (!strcmp(count_token, "post_nat_src_port")) cfg_set_aggregate(filename, value, COUNT_INT_POST_NAT_SRC_PORT, count_token);
+    else if (!strcmp(count_token, "post_nat_dst_port")) cfg_set_aggregate(filename, value, COUNT_INT_POST_NAT_DST_PORT, count_token);
+    else if (!strcmp(count_token, "nat_event")) cfg_set_aggregate(filename, value, COUNT_INT_NAT_EVENT, count_token);
+    else if (!strcmp(count_token, "timestamp_start")) cfg_set_aggregate(filename, value, COUNT_INT_TIMESTAMP_START, count_token);
+    else if (!strcmp(count_token, "timestamp_end")) cfg_set_aggregate(filename, value, COUNT_INT_TIMESTAMP_END, count_token);
     else Log(LOG_WARNING, "WARN ( %s ): ignoring unknown aggregation method: %s.\n", filename, count_token);
   }
 
-  if (!name) for (; list; list = list->next, changes++) list->cfg.what_to_count = value;
+  if (!name) for (; list; list = list->next, changes++) {
+    list->cfg.what_to_count = value[1];
+    list->cfg.what_to_count_2 = value[2];
+  }
   else {
     for (; list; list = list->next) {
       if (!strcmp(name, list->name)) {
-        list->cfg.what_to_count = value;
+        list->cfg.what_to_count = value[1];
+        list->cfg.what_to_count_2 = value[2];
         changes++;
         break;
       }
@@ -235,11 +251,7 @@ int cfg_key_aggregate_filter(char *filename, char *name, char *value_ptr)
 int cfg_key_pre_tag_filter(char *filename, char *name, char *value_ptr)
 {
   struct plugins_list_entry *list = plugins_list;
-  char *count_token, *range_ptr;
-  pm_id_t value = 0, range = 0;
   int changes = 0;
-  char *endptr_v, *endptr_r;
-  u_int8_t neg;
 
   if (!name) {
     Log(LOG_ERR, "ERROR ( %s ): TAG filter cannot be global. Not loaded.\n", filename);
@@ -248,28 +260,7 @@ int cfg_key_pre_tag_filter(char *filename, char *name, char *value_ptr)
   else {
     for (; list; list = list->next) {
       if (!strcmp(name, list->name)) {
-	trim_all_spaces(value_ptr);
-
-	list->cfg.ptf.num = 0;
-	while ((count_token = extract_token(&value_ptr, ',')) && changes < MAX_PRETAG_MAP_ENTRIES/4) {
-	  neg = pt_check_neg(&count_token);
-	  range_ptr = pt_check_range(count_token); 
-	  value = strtoull(count_token, &endptr_v, 10);
-	  if (range_ptr) range = strtoull(range_ptr, &endptr_r, 10);
-	  else range = value;
-
-	  if (range_ptr && range <= value) {
-	    Log(LOG_ERR, "WARN ( %s ): Range value is expected in the format low-high. '%llu-%llu' not loaded.\n", filename, value, range);
-	    changes++;
-	    break;
-	  }
-
-          list->cfg.ptf.table[list->cfg.ptf.num].neg = neg;
-          list->cfg.ptf.table[list->cfg.ptf.num].n = value;
-          list->cfg.ptf.table[list->cfg.ptf.num].r = range;
-	  list->cfg.ptf.num++;
-          changes++;
-	}
+	changes = load_tags(filename, &list->cfg.ptf, value_ptr);
         break;
       }
     }
@@ -294,28 +285,7 @@ int cfg_key_pre_tag2_filter(char *filename, char *name, char *value_ptr)
   else {
     for (; list; list = list->next) {
       if (!strcmp(name, list->name)) {
-        trim_all_spaces(value_ptr);
-
-        list->cfg.pt2f.num = 0;
-        while ((count_token = extract_token(&value_ptr, ',')) && changes < MAX_PRETAG_MAP_ENTRIES/4) {
-          neg = pt_check_neg(&count_token);
-          range_ptr = pt_check_range(count_token);
-          value = strtoull(count_token, &endptr_v, 10);
-          if (range_ptr) range = strtoull(range_ptr, &endptr_r, 10);
-          else range = value;
-
-          if (range_ptr && range <= value) {
-            Log(LOG_ERR, "WARN ( %s ): Range value is expected in the format low-high. '%llu-%llu' not loaded.\n", filename, value, range);
-            changes++;
-            break;
-          }
-
-          list->cfg.pt2f.table[list->cfg.pt2f.num].neg = neg;
-          list->cfg.pt2f.table[list->cfg.pt2f.num].n = value;
-          list->cfg.pt2f.table[list->cfg.pt2f.num].r = range;
-          list->cfg.pt2f.num++;
-          changes++;
-        }
+        changes = load_tags(filename, &list->cfg.pt2f, value_ptr);
         break;
       }
     }
@@ -654,8 +624,73 @@ int cfg_key_sql_table(char *filename, char *name, char *value_ptr)
   }
 
   if (strlen(value_ptr) > 64) {
-    Log(LOG_ERR, "ERROR ( %s ): sql_table, exceeded the maximum SQL table name length (64).\n", filename);
+    Log(LOG_ERR, "ERROR ( %s ): sql_table, exceeded the maximum SQL table name length (255).\n", filename);
     exit(1);
+  }
+
+  if (!name) for (; list; list = list->next, changes++) list->cfg.sql_table = value_ptr;
+  else {
+    for (; list; list = list->next) {
+      if (!strcmp(name, list->name)) {
+        list->cfg.sql_table = value_ptr;
+        changes++;
+        break;
+      }
+    }
+  }
+
+  return changes;
+}
+
+int cfg_key_print_output_file(char *filename, char *name, char *value_ptr)
+{
+  struct plugins_list_entry *list = plugins_list;
+  int changes = 0;
+
+  /* validations: we allow only a) certain variable names, b) a maximum of 8 variables */
+  {
+    int num = 0;
+    char *c, *ptr = value_ptr;
+
+    while (c = strchr(ptr, '%')) {
+      c++;
+      ptr = c;
+      switch (*c) {
+      case 'd':
+        num++;
+        break;
+      case 'H':
+        num++;
+        break;
+      case 'm':
+        num++;
+        break;
+      case 'M':
+        num++;
+        break;
+      case 'w':
+        num++;
+        break;
+      case 'W':
+        num++;
+        break;
+      case 'Y':
+        num++;
+        break;
+      case 's':
+        num++;
+        break;
+      default:
+        Log(LOG_ERR, "ERROR ( %s ): sql_table, %%%c not supported.\n", filename, *c);
+        exit(1);
+        break;
+      }
+    }
+
+    if (num > 8) {
+      Log(LOG_ERR, "ERROR ( %s ): sql_table, exceeded the maximum allowed variables (8) into the table name.\n", filename);
+      exit(1);
+    }
   }
 
   if (!name) for (; list; list = list->next, changes++) list->cfg.sql_table = value_ptr;
@@ -1192,6 +1227,31 @@ int cfg_key_sql_multi_values(char *filename, char *name, char *value_ptr)
   return changes;
 }
 
+int cfg_key_mongo_insert_batch(char *filename, char *name, char *value_ptr)
+{
+  struct plugins_list_entry *list = plugins_list;
+  int changes = 0, value = 0;
+
+  value = atoi(value_ptr);
+  if (value <= 0) {
+    Log(LOG_WARNING, "WARN ( %s ): 'mongo_insert_batch' has to be > 0.\n", filename);
+    return ERR;
+  }
+
+  if (!name) for (; list; list = list->next, changes++) list->cfg.mongo_insert_batch = value;
+  else {
+    for (; list; list = list->next) {
+      if (!strcmp(name, list->name)) {
+        list->cfg.mongo_insert_batch = value;
+        changes++;
+        break;
+      }
+    }
+  }
+
+  return changes;
+}
+
 int cfg_key_sql_aggressive_classification(char *filename, char *name, char *value_ptr)
 {
   struct plugins_list_entry *list = plugins_list;
@@ -1271,6 +1331,28 @@ int cfg_key_sql_delimiter(char *filename, char *name, char *value_ptr)
     for (; list; list = list->next) {
       if (!strcmp(name, list->name)) {
         list->cfg.sql_delimiter = value_ptr;
+        changes++;
+        break;
+      }
+    }
+  }
+
+  return changes;
+}
+
+int cfg_key_timestamps_secs(char *filename, char *name, char *value_ptr)
+{
+  struct plugins_list_entry *list = plugins_list;
+  int value, changes = 0;
+
+  value = parse_truefalse(value_ptr);
+  if (value < 0) return ERR;
+
+  if (!name) for (; list; list = list->next, changes++) list->cfg.timestamps_secs = value;
+  else {
+    for (; list; list = list->next) {
+      if (!strcmp(name, list->name)) {
+        list->cfg.timestamps_secs = value;
         changes++;
         break;
       }
@@ -1407,6 +1489,28 @@ int cfg_key_networks_file(char *filename, char *name, char *value_ptr)
   return changes;
 }
 
+int cfg_key_networks_file_filter(char *filename, char *name, char *value_ptr)
+{
+  struct plugins_list_entry *list = plugins_list;
+  int value, changes = 0;
+
+  value = parse_truefalse(value_ptr);
+  if (value < 0) return ERR;
+
+  if (!name) for (; list; list = list->next, changes++) list->cfg.networks_file_filter = value;
+  else {
+    for (; list; list = list->next) {
+      if (!strcmp(name, list->name)) {
+        list->cfg.networks_file_filter = value;
+        changes++;
+        break;
+      }
+    }
+  }
+
+  return changes;
+}
+
 int cfg_key_networks_cache_entries(char *filename, char *name, char *value_ptr)
 {
   struct plugins_list_entry *list = plugins_list;
@@ -1460,31 +1564,6 @@ int cfg_key_refresh_maps(char *filename, char *name, char *value_ptr)
 
   for (; list; list = list->next, changes++) list->cfg.refresh_maps = value;
   if (name) Log(LOG_WARNING, "WARN ( %s ): plugin name not supported for key 'refresh_maps'. Globalized.\n", filename);
-
-  return changes;
-}
-
-int cfg_key_print_refresh_time(char *filename, char *name, char *value_ptr)
-{
-  struct plugins_list_entry *list = plugins_list;
-  int value, changes = 0;
-
-  value = atoi(value_ptr);
-  if (value <= 0) {
-    Log(LOG_ERR, "WARN ( %s ): 'print_refresh_time' has to be > 0.\n", filename);
-    return ERR;
-  }
-
-  if (!name) for (; list; list = list->next, changes++) list->cfg.print_refresh_time = value;
-  else {
-    for (; list; list = list->next) {
-      if (!strcmp(name, list->name)) {
-        list->cfg.print_refresh_time = value;
-        changes++;
-        break;
-      }
-    }
-  }
 
   return changes;
 }
@@ -1545,6 +1624,14 @@ int cfg_key_print_output(char *filename, char *name, char *value_ptr)
     value = PRINT_OUTPUT_FORMATTED;
   else if (!strcmp(value_ptr, "csv"))
     value = PRINT_OUTPUT_CSV;
+  else if (!strcmp(value_ptr, "event_formatted")) {
+    value = PRINT_OUTPUT_FORMATTED;
+    value |= PRINT_OUTPUT_EVENT;
+  }
+  else if (!strcmp(value_ptr, "event_csv")) {
+    value = PRINT_OUTPUT_CSV;
+    value |= PRINT_OUTPUT_EVENT;
+  }
   else {
     Log(LOG_WARNING, "WARN ( %s ): Invalid print output value '%s'\n", filename, value_ptr);
     return ERR;
@@ -1555,6 +1642,30 @@ int cfg_key_print_output(char *filename, char *name, char *value_ptr)
     for (; list; list = list->next) {
       if (!strcmp(name, list->name)) {
         list->cfg.print_output = value;
+        changes++;
+        break;
+      }
+    }
+  }
+
+  return changes;
+}
+
+int cfg_key_print_output_separator(char *filename, char *name, char *value_ptr)
+{
+  struct plugins_list_entry *list = plugins_list;
+  int changes = 0;
+
+  if (strlen(value_ptr) != 1) {
+    Log(LOG_WARNING, "WARN ( %s ): Invalid print_output_separator value '%s'. Only one char allowed.\n", filename, value_ptr);
+    return ERR;
+  }
+
+  if (!name) for (; list; list = list->next, changes++) list->cfg.print_output_separator = value_ptr;
+  else {
+    for (; list; list = list->next) {
+      if (!strcmp(name, list->name)) {
+        list->cfg.print_output_separator = value_ptr;
         changes++;
         break;
       }
@@ -1815,28 +1926,6 @@ int cfg_key_nfacctd_mcast_groups(char *filename, char *name, char *value_ptr)
 		  filename);
   if (more) Log(LOG_WARNING, "WARN ( %s ): Only the first %u (on a total of %u) multicast groups will be joined.\n",
 		  filename, MAX_MCAST_GROUPS, MAX_MCAST_GROUPS+more);
-
-  return changes;
-}
-
-int cfg_key_nfacctd_sql_log(char *filename, char *name, char *value_ptr)
-{
-  struct plugins_list_entry *list = plugins_list;
-  int value, changes = 0;
-
-  value = parse_truefalse(value_ptr);
-  if (value < 0) return ERR;
-
-  if (!name) for (; list; list = list->next, changes++) list->cfg.nfacctd_sql_log = value;
-  else {
-    for (; list; list = list->next) {
-      if (!strcmp(name, list->name)) {
-        list->cfg.nfacctd_sql_log = value;
-        changes++;
-	break;
-      }
-    }
-  }
 
   return changes;
 }
@@ -2283,6 +2372,28 @@ int cfg_key_nfacctd_isis_msglog(char *filename, char *name, char *value_ptr)
 
   for (; list; list = list->next, changes++) list->cfg.nfacctd_isis_msglog = value;
   if (name) Log(LOG_WARNING, "WARN ( %s ): plugin name not supported for key 'isis_daemon_msglog'. Globalized.\n", filename);
+
+  return changes;
+}
+
+int cfg_key_igp_daemon_map(char *filename, char *name, char *value_ptr)
+{
+  struct plugins_list_entry *list = plugins_list;
+  int changes = 0;
+
+  for (; list; list = list->next, changes++) list->cfg.igp_daemon_map = value_ptr;
+  if (name) Log(LOG_WARNING, "WARN ( %s ): plugin name not supported for key 'igp_daemon_map'. Globalized.\n", filename);
+
+  return changes;
+}
+
+int cfg_key_igp_daemon_map_msglog(char *filename, char *name, char *value_ptr)
+{
+  struct plugins_list_entry *list = plugins_list;
+  int value, changes = 0;
+
+  for (; list; list = list->next, changes++) list->cfg.igp_daemon_map_msglog = value_ptr;
+  if (name) Log(LOG_WARNING, "WARN ( %s ): plugin name not supported for key 'igp_daemon_map_msglog'. Globalized.\n", filename);
 
   return changes;
 }
@@ -2941,6 +3052,75 @@ int cfg_key_tee_transparent(char *filename, char *name, char *value_ptr)
   return changes;
 }
 
+int cfg_key_tee_max_receivers(char *filename, char *name, char *value_ptr)
+{
+  struct plugins_list_entry *list = plugins_list;
+  int value, changes = 0;
+
+  value = atoi(value_ptr);
+  if (value < 1) {
+    Log(LOG_WARNING, "WARN ( %s ): invalid 'tee_max_receivers' value). Allowed values are >= 1.\n", filename);
+    return ERR;
+  }
+
+  if (!name) for (; list; list = list->next, changes++) list->cfg.tee_max_receivers = value;
+  else {
+    for (; list; list = list->next) {
+      if (!strcmp(name, list->name)) {
+        list->cfg.tee_max_receivers = value;
+        changes++;
+        break;
+      }
+    }
+  }
+
+  return changes;
+}
+
+int cfg_key_tee_max_receiver_pools(char *filename, char *name, char *value_ptr)
+{
+  struct plugins_list_entry *list = plugins_list;
+  int value, changes = 0;
+
+  value = atoi(value_ptr);
+  if (value < 1) {
+    Log(LOG_WARNING, "WARN ( %s ): invalid 'tee_max_receiver_pools' value). Allowed values are >= 1.\n", filename);
+    return ERR;
+  }
+
+  if (!name) for (; list; list = list->next, changes++) list->cfg.tee_max_receiver_pools = value;
+  else {
+    for (; list; list = list->next) {
+      if (!strcmp(name, list->name)) {
+        list->cfg.tee_max_receiver_pools = value;
+        changes++;
+        break;
+      }
+    }
+  }
+
+  return changes;
+}
+
+int cfg_key_tee_receivers(char *filename, char *name, char *value_ptr)
+{
+  struct plugins_list_entry *list = plugins_list;
+  int changes = 0;
+
+  if (!name) for (; list; list = list->next, changes++) list->cfg.tee_receivers = value_ptr;
+  else {
+    for (; list; list = list->next) {
+      if (!strcmp(name, list->name)) {
+        list->cfg.tee_receivers = value_ptr;
+        changes++;
+        break;
+      }
+    }
+  }
+
+  return changes;
+}
+
 void parse_time(char *filename, char *value, int *mu, int *howmany)
 {
   int k, j, len;
@@ -3010,19 +3190,40 @@ int cfg_key_tunnel_0(char *filename, char *name, char *value_ptr)
   return changes;
 }
 
-int cfg_key_xlate_src(char *filename, char *name, char *value_ptr)
+#if defined WITH_GEOIP
+int cfg_key_geoip_ipv4_file(char *filename, char *name, char *value_ptr)
 {
   struct plugins_list_entry *list = plugins_list;
-  int value, changes = 0;
+  int changes = 0;
 
-  value = parse_truefalse(value_ptr);
-  if (value < 0) return ERR;
+  for (; list; list = list->next, changes++) list->cfg.geoip_ipv4_file = value_ptr;
 
-  if (!name) for (; list; list = list->next, changes++) list->cfg.xlate_src = value;
+  return changes;
+}
+
+#if defined ENABLE_IPV6
+int cfg_key_geoip_ipv6_file(char *filename, char *name, char *value_ptr)
+{
+  struct plugins_list_entry *list = plugins_list;
+  int changes = 0;
+
+  for (; list; list = list->next, changes++) list->cfg.geoip_ipv6_file = value_ptr;
+
+  return changes;
+}
+#endif
+#endif
+
+int cfg_key_pkt_len_distrib_bins(char *filename, char *name, char *value_ptr)
+{
+  struct plugins_list_entry *list = plugins_list;
+  int changes = 0;
+
+  if (!name) for (; list; list = list->next, changes++) list->cfg.pkt_len_distrib_bins_str = value_ptr;
   else {
     for (; list; list = list->next) {
       if (!strcmp(name, list->name)) {
-        list->cfg.xlate_src = value;
+        list->cfg.pkt_len_distrib_bins_str = value_ptr;
         changes++;
         break;
       }
@@ -3032,24 +3233,14 @@ int cfg_key_xlate_src(char *filename, char *name, char *value_ptr)
   return changes;
 }
 
-int cfg_key_xlate_dst(char *filename, char *name, char *value_ptr)
+void cfg_set_aggregate(char *filename, u_int64_t registry[], u_int64_t input, char *token)
 {
-  struct plugins_list_entry *list = plugins_list;
-  int value, changes = 0;
+  u_int64_t index = (input >> COUNT_REGISTRY_BITS) & COUNT_INDEX_MASK;
+  u_int64_t value = (input & COUNT_REGISTRY_MASK);
 
-  value = parse_truefalse(value_ptr);
-  if (value < 0) return ERR;
-
-  if (!name) for (; list; list = list->next, changes++) list->cfg.xlate_dst = value;
-  else {
-    for (; list; list = list->next) {
-      if (!strcmp(name, list->name)) {
-        list->cfg.xlate_dst = value;
-        changes++;
-        break;
-      }
-    }
+  if (registry[index] & value) {
+    Log(LOG_ERR, "ERROR ( %s ): '%s' repeated in 'aggregate' or invalid 0x%x bit code.\n", filename, token, input);
+    exit(1);
   }
-
-  return changes;
+  else registry[index] |= value;
 }

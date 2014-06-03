@@ -29,7 +29,7 @@
  * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-/* $Id$ */
+/* $Id: netflow9.c,v 1.25 2012-12-21 19:10:40 paolo Exp $ */
 
 #define __NFPROBE_NETFLOW9_C
 
@@ -412,7 +412,7 @@ nf9_init_template(void)
 	 * aggregation, then let's choose one. If we don't have one or
 	 * more flow-distinguishing primitives, then let's add flow
 	 * aggregation info to the template */
-	if ( ! config.nfprobe_what_to_count ) {
+	if (!config.nfprobe_what_to_count && !config.nfprobe_what_to_count_2) {
 	  config.nfprobe_what_to_count |= COUNT_SRC_HOST;
 	  config.nfprobe_what_to_count |= COUNT_DST_HOST;
 	  config.nfprobe_what_to_count |= COUNT_SRC_PORT;
@@ -1655,8 +1655,10 @@ send_netflow_v9(struct FLOW **flows, int num_flows, int nfsock,
 		  errsz = sizeof(err);
 		  /* Clear ICMP errors */
 		  getsockopt(nfsock, SOL_SOCKET, SO_ERROR, &err, &errsz); 
-		  if (send(nfsock, packet, (size_t)offset, 0) == -1)
-			return (-1);
+		  if (send(nfsock, packet, (size_t)offset, 0) == -1) {
+		    Log(LOG_WARNING, "WARN ( %s/%s ): send() failed: %s\n", config.name, config.type, strerror(errno));
+		    return (-1);
+		  }
 		  num_packets++;
 		  nf9_pkts_until_template--;
 		}

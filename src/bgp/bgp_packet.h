@@ -8,7 +8,7 @@
  *
  * Baselined from:
  *
- * $Id$
+ * $Id: bgp_packet.h,v 1.4 2012-04-10 14:53:21 paolo Exp $
  *
  * Wireshark - Network traffic analyzer
  * By Gerald Combs <gerald@wireshark.org>
