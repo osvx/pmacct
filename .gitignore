@@ -13,6 +13,7 @@ INSTALL
 install-sh
 missing
 mkinstalldirs
+/compile
 /aclocal.m4
 /autom4te.cache
 /build-stamp
